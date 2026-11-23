@@ -42,10 +42,10 @@ jobs:
           if defined WATCOM (
             echo Detected WATCOM=%WATCOM%
             echo WATCOM=%WATCOM%>> "%GITHUB_ENV%"
-            echo LIB=%WATCOM%\LIB386\DOS;%WATCOM%\LIB386;%WATCOM%\LIB386\NT>> "%GITHUB_ENV%"
+            echo LIB=%WATCOM%\LIB386\DOS;%WATCOM%\LIB386;%WATCOM%\LIB386\NT;%WATCOM%\LIB286\WIN;%WATCOM%\LIB286>> "%GITHUB_ENV%"
             echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
             set "PATH=%WATCOM%\BINNT64;%WATCOM%\BINNT;%PATH%"
-            dir /s /b "%WATCOM%\*clib3r*" "%WATCOM%\BIN*\wcl*.exe" 2>nul
+            dir /s /b "%WATCOM%\*.lib" "%WATCOM%\BIN*\wcl*.exe" 2>nul
           ) else (
             echo Open Watcom binary directory not auto-detected
             exit /b 1
@@ -62,7 +62,8 @@ jobs:
           ) else if exist "%WATCOM%\BINNT\wcl386.exe" (
             "%WATCOM%\BINNT\wcl386.exe" -bt=dos -l=dos4g bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
           ) else (
-            wcl -bt=dos -mm -1 bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
+            echo wcl386.exe not found under %WATCOM%
+            exit /b 1
           )
 
       - name: 2. Build Win16 (bgc_win16.exe)
@@ -76,7 +77,7 @@ jobs:
           ) else if exist "%WATCOM%\BINNT64\wcl.exe" (
             "%WATCOM%\BINNT64\wcl.exe" -bt=windows -ml -1 bgc.c -fe=dist\bgc_win16.exe -dBGC_VAULT_KEY=0x13572468u
           ) else (
-            echo wcl.exe not found under WATCOM
+            echo wcl.exe not found under %WATCOM%
             exit /b 1
           )
 
@@ -84,7 +85,12 @@ jobs:
         id: build_9x
         continue-on-error: true
         run: |
+          set "VSDIR="
           for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo VSDIR not found via vswhere
+            exit /b 1
+          )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
           cl /nologo /O2 /FIwinsock2.h /DWINVER=0x0400 /D_WIN32_WINDOWS=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win95_98.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib && ^
           cl /nologo /O2 /FIwinsock2.h /DWINVER=0x0490 /D_WIN32_WINDOWS=0x0490 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_winme.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
@@ -93,18 +99,28 @@ jobs:
         id: build_nt_2000
         continue-on-error: true
         run: |
+          set "VSDIR="
           for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo VSDIR not found via vswhere
+            exit /b 1
+          )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
-          cl /nologo /O2 /FIwinsock2.h /D_WIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib && ^
-          cl /nologo /O2 /FIwinsock2.h /D_WIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib && ^
+          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
 
       - name: 5. Build Windows XP 32-bit (XP32 - MSVC x86)
         id: build_xp32
         continue-on-error: true
         run: |
+          set "VSDIR="
           for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo VSDIR not found via vswhere
+            exit /b 1
+          )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
-          cl /nologo /O2 /FIwinsock2.h /D_WIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp32.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp32.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
 
       - name: Upload retro & XP32 artifacts
         if: always()
@@ -117,13 +133,13 @@ jobs:
       - name: Check overall retro build status
         if: always()
         run: |
-          set "ANY_FAIL=0"
-          if not "%build_freedos_outcome%"=="success" set "ANY_FAIL=1"
-          if not "%build_win16_outcome%"=="success" set "ANY_FAIL=1"
-          if not "%build_9x_outcome%"=="success" set "ANY_FAIL=1"
-          if not "%build_nt_2000_outcome%"=="success" set "ANY_FAIL=1"
-          if not "%build_xp32_outcome%"=="success" set "ANY_FAIL=1"
-          if "%ANY_FAIL%"=="1" (
-            echo Some retro/XP32 targets failed; prior successful builds were uploaded to bgc-retro-nt-to-xp.
+          set "FAILED="
+          if not "%build_freedos_outcome%"=="success" set "FAILED=%FAILED% build_freedos(%build_freedos_outcome%)"
+          if not "%build_win16_outcome%"=="success" set "FAILED=%FAILED% build_win16(%build_win16_outcome%)"
+          if not "%build_9x_outcome%"=="success" set "FAILED=%FAILED% build_9x(%build_9x_outcome%)"
+          if not "%build_nt_2000_outcome%"=="success" set "FAILED=%FAILED% build_nt_2000(%build_nt_2000_outcome%)"
+          if not "%build_xp32_outcome%"=="success" set "FAILED=%FAILED% build_xp32(%build_xp32_outcome%)"
+          if defined FAILED (
+            echo FAILED TARGETS:%FAILED%
             exit /b 1
           )
