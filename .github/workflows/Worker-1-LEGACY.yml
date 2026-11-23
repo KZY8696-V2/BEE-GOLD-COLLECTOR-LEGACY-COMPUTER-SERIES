@@ -1,0 +1,82 @@
+name: Build Retro (DOS, Win16, 9x, NT & XP32)
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  retro-to-xp32:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare dist directory
+        run: if not exist dist mkdir dist
+
+      - name: Setup Open Watcom
+        id: ow_setup
+        continue-on-error: true
+        run: |
+          choco install openwatcom -y --no-progress --limit-output
+          set "WATCOM=C:\WATCOM"
+          if not exist "%WATCOM%\BINNT64" (
+            for /d %%D in ("C:\*WATCOM*") do set "WATCOM=%%~fD"
+          )
+          echo WATCOM=%WATCOM%>> "%GITHUB_ENV%"
+          echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
+
+      - name: 1. MS-DOS / FreeDOS (Open Watcom)
+        id: build_dos
+        continue-on-error: true
+        run: |
+          set "INCLUDE=%WATCOM%\H;%WATCOM%\H\NT"
+          wcl -bt=dos -mm -1 bgc.c -fe=dist\bgc_dos.exe -dBGC_VAULT_KEY=0x13572468u
+
+      - name: 2. Win16 (Open Watcom)
+        id: build_win16
+        continue-on-error: true
+        run: |
+          set "INCLUDE=%WATCOM%\H;%WATCOM%\H\WIN"
+          wcl -bt=windows -ml -1 bgc.c -fe=dist\bgc_win16.exe -dBGC_VAULT_KEY=0x13572468u
+
+      - name: 3. Windows 9x (95 / 98 / ME)
+        id: build_9x
+        continue-on-error: true
+        run: |
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cl /nologo /O2 /DWINVER=0x0400 /D_WIN32_WINDOWS=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win95_98.exe /link gdi32.lib winmm.lib user32.lib && ^
+          cl /nologo /O2 /DWINVER=0x0490 /D_WIN32_WINDOWS=0x0490 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_winme.exe /link gdi32.lib winmm.lib user32.lib
+
+      - name: 4. NT up to 2000 (NT 4.0 -> Windows 2000)
+        id: build_nt_2000
+        continue-on-error: true
+        run: |
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cl /nologo /O2 /D_WIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib && ^
+          cl /nologo /O2 /D_WIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+
+      - name: 5. Windows XP 32-bit (XP32 - MSVC x86)
+        id: build_xp32
+        continue-on-error: true
+        run: |
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cl /nologo /O2 /D_WIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp32.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+
+      - name: Upload retro & XP32 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgc-retro-nt-to-xp
+          path: dist/*
+          if-no-files-found: ignore
