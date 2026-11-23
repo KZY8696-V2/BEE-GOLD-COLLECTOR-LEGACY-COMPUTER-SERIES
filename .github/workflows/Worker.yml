@@ -1,4 +1,4 @@
-name: Build All Legacy & Modern Targets
+name: Build All DOS, 9x (incl. ME), NT & Modern Targets
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-sequential:
+  build-all-sequential:
     runs-on: windows-latest
     defaults:
       run:
@@ -22,9 +22,8 @@ jobs:
         run: |
           if not exist dist mkdir dist
 
-      # 1. MS-DOS / FreeDOS (Open Watcom - ilk adım)
-      - name: Setup Open Watcom
-        id: ow_setup
+      - name: Setup Open Watcom & MSYS2 MinGW
+        id: toolchains_setup
         continue-on-error: true
         run: |
           choco install openwatcom -y --no-progress
@@ -35,6 +34,15 @@ jobs:
           echo WATCOM=%WATCOM%>> "%GITHUB_ENV%"
           echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
 
+          if not exist "C:\msys64\mingw64\bin\gcc.exe" (
+            choco install msys2 -y --no-progress
+            C:\msys64\usr\bin\bash.exe -lc "pacman --noconfirm -Sy mingw-w64-x86_64-gcc mingw-w64-i686-gcc"
+          )
+          echo C:\msys64\mingw64\bin;C:\msys64\mingw32\bin>> "%GITHUB_PATH%"
+
+      # ======================================================================
+      # 1. MS-DOS / FreeDOS (Open Watcom - Ilk Adim)
+      # ======================================================================
       - name: 1. Build MS-DOS / FreeDOS (Open Watcom)
         id: build_dos
         continue-on-error: true
@@ -42,7 +50,9 @@ jobs:
           set "INCLUDE=%WATCOM%\H;%WATCOM%\H\NT"
           wcl -bt=dos -mm -1 bgc.c -fe=dist\bgc_dos.exe -dBGC_VAULT_KEY=0x13572468u
 
+      # ======================================================================
       # 2. Win16 (Open Watcom)
+      # ======================================================================
       - name: 2. Build Win16 (Open Watcom)
         id: build_win16
         continue-on-error: true
@@ -50,76 +60,127 @@ jobs:
           set "INCLUDE=%WATCOM%\H;%WATCOM%\H\WIN"
           wcl -bt=windows -ml -1 bgc.c -fe=dist\bgc_win16.exe -dBGC_VAULT_KEY=0x13572468u
 
-      # 3. Win9x / 2000 (32-bit x86 subsystem target)
-      - name: 3. Build Win9x / 2000 (x86)
-        id: build_win9x_2k
+      # ======================================================================
+      # 3. Tum Windows 9x Surumleri (Win95, Win98, Windows ME dahil)
+      # ======================================================================
+      - name: 3a. Build Windows 95 (9x)
+        id: build_win95
         continue-on-error: true
         run: |
-          where gcc >nul 2>nul && (
-            gcc -m32 -O2 -D_WIN32_WINNT=0x0500 bgc.c -o dist\bgc_win9x_2k.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
-          ) || (
-            echo GCC not found for Win9x/2000 step
-            exit /b 1
-          )
+          gcc -m32 -O2 -DWINVER=0x0400 -D_WIN32_WINDOWS=0x0400 bgc.c -o dist\bgc_win95.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
 
-      # 4. XP32 (XP 64'ten hemen önce)
-      - name: 4. Build Windows XP 32-bit (XP32)
+      - name: 3b. Build Windows 98 (9x)
+        id: build_win98
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x0410 -D_WIN32_WINDOWS=0x0410 bgc.c -o dist\bgc_win98.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 3c. Build Windows ME (9x)
+        id: build_winme
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x0490 -D_WIN32_WINDOWS=0x0490 bgc.c -o dist\bgc_winme.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+
+      # ======================================================================
+      # 4. Tum Windows NT Surumleri (NT 3.1 .. Windows 11; XP32 -> XP64 sirali)
+      # ======================================================================
+      - name: 4a. Build Windows NT 3.1
+        id: build_nt31
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x030A -D_WIN32_WINNT=0x030A bgc.c -o dist\bgc_nt31.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 4b. Build Windows NT 3.5
+        id: build_nt35
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x0332 -D_WIN32_WINNT=0x0332 bgc.c -o dist\bgc_nt35.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 4c. Build Windows NT 3.51
+        id: build_nt351
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x0333 -D_WIN32_WINNT=0x0333 bgc.c -o dist\bgc_nt351.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 4d. Build Windows NT 4.0
+        id: build_nt40
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x0400 -D_WIN32_WINNT=0x0400 bgc.c -o dist\bgc_nt40.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 4e. Build Windows 2000 (NT 5.0)
+        id: build_win2000
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x0500 -D_WIN32_WINNT=0x0500 bgc.c -o dist\bgc_win2000.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 4f. Build Windows XP 32-bit (XP32 - NT 5.1)
         id: build_xp32
         continue-on-error: true
         run: |
-          where gcc >nul 2>nul && (
-            gcc -m32 -O2 -D_WIN32_WINNT=0x0501 bgc.c -o dist\bgc_xp32.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
-          ) || (
-            echo GCC not found for XP32 step
-            exit /b 1
-          )
+          gcc -m32 -O2 -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 bgc.c -o dist\bgc_xp32.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
-      # 5. XP64 (XP32'den hemen sonra)
-      - name: 5. Build Windows XP 64-bit (XP64)
+      - name: 4g. Build Windows XP 64-bit (XP64 - NT 5.2)
         id: build_xp64
         continue-on-error: true
         run: |
-          where gcc >nul 2>nul && (
-            gcc -m64 -O2 -D_WIN32_WINNT=0x0502 bgc.c -o dist\bgc_xp64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
-          ) || (
-            echo GCC not found for XP64 step
-            exit /b 1
-          )
+          gcc -m64 -O2 -DWINVER=0x0502 -D_WIN32_WINNT=0x0502 bgc.c -o dist\bgc_xp64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
-      # 6. Modern Win32 & Win64
-      - name: 6. Build Win32 & Win64
-        id: build_win_modern
+      - name: 4h. Build Windows Vista (NT 6.0)
+        id: build_vista
         continue-on-error: true
         run: |
-          where gcc >nul 2>nul && (
-            gcc -m32 -O2 bgc.c -o dist\bgc_win32.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u && ^
-            gcc -m64 -O2 bgc.c -o dist\bgc_win64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
-          ) || (
-            echo GCC not found for Win32/Win64 step
-            exit /b 1
-          )
+          gcc -m64 -O2 -DWINVER=0x0600 -D_WIN32_WINNT=0x0600 bgc.c -o dist\bgc_vista.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
-      # Hata olsa bile şimdiye kadar üretilen tüm başarılı çıktıları gönder
-      - name: Upload successful build artifacts
+      - name: 4i. Build Windows 7 (NT 6.1)
+        id: build_win7
+        continue-on-error: true
+        run: |
+          gcc -m64 -O2 -DWINVER=0x0601 -D_WIN32_WINNT=0x0601 bgc.c -o dist\bgc_win7.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 4j. Build Windows 8 / 8.1 (NT 6.2 / 6.3)
+        id: build_win8
+        continue-on-error: true
+        run: |
+          gcc -m64 -O2 -DWINVER=0x0603 -D_WIN32_WINNT=0x0603 bgc.c -o dist\bgc_win8.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+
+      - name: 4k. Build Windows 10 / 11 (NT 10.0)
+        id: build_win10_11
+        continue-on-error: true
+        run: |
+          gcc -m32 -O2 -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00 bgc.c -o dist\bgc_win10_11_x86.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u && ^
+          gcc -m64 -O2 -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00 bgc.c -o dist\bgc_win10_11_x64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+
+      # Hata olsa bile onceki basarili tum ciktilari yukle
+      - name: Upload all successful build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bgc-builds
+          name: bgc-all-targets
           path: dist/*
           if-no-files-found: ignore
 
-      # Tüm adımların özetini kontrol et; herhangi biri başarısızsa job'ı failed yap
-      - name: Enforce build status check
+      - name: Check overall build status
         if: always()
         run: |
-          set "FAILED=0"
-          if not "%build_dos_outcome%"=="success" set "FAILED=1"
-          if not "%build_win16_outcome%"=="success" set "FAILED=1"
-          if not "%build_win9x_2k_outcome%"=="success" set "FAILED=1"
-          if not "%build_xp32_outcome%"=="success" set "FAILED=1"
-          if not "%build_xp64_outcome%"=="success" set "FAILED=1"
-          if not "%build_win_modern_outcome%"=="success" set "FAILED=1"
-          if "%FAILED%"=="1" (
-            echo One or more build targets failed. Successful prior artifacts were uploaded.
+          set "ANY_FAIL=0"
+          if not "%build_dos_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_win16_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_win95_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_win98_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_winme_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_nt31_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_nt35_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_nt351_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_nt40_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_win2000_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_xp32_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_xp64_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_vista_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_win7_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_win8_outcome%"=="success" set "ANY_FAIL=1"
+          if not "%build_win10_11_outcome%"=="success" set "ANY_FAIL=1"
+          if "%ANY_FAIL%"=="1" (
+            echo At least one target failed; prior successful builds were uploaded to artifact bgc-all-targets.
             exit /b 1
           )
