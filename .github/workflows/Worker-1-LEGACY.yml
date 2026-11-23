@@ -42,12 +42,12 @@ jobs:
           if defined WATCOM (
             echo Detected WATCOM=%WATCOM%
             echo WATCOM=%WATCOM%>> "%GITHUB_ENV%"
+            echo LIB=%WATCOM%\LIB386\DOS;%WATCOM%\LIB386;%WATCOM%\LIB386\NT>> "%GITHUB_ENV%"
             echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
             set "PATH=%WATCOM%\BINNT64;%WATCOM%\BINNT;%PATH%"
-            where wcl wcl386 2>nul || dir /s /b "%WATCOM%\BIN*\wcl*.exe"
+            dir /s /b "%WATCOM%\*clib3r*" "%WATCOM%\BIN*\wcl*.exe" 2>nul
           ) else (
-            echo Open Watcom binary directory not auto-detected; listing C:\ root:
-            dir /b C:\
+            echo Open Watcom binary directory not auto-detected
             exit /b 1
           )
 
@@ -56,12 +56,13 @@ jobs:
         continue-on-error: true
         run: |
           set "INCLUDE=%WATCOM%\H;%WATCOM%\H\NT"
-          if exist "%WATCOM%\BINNT64\wcl.exe" (
-            wcl -bt=dos -mm -1 bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
-          ) else if exist "%WATCOM%\BINNT\wcl.exe" (
-            wcl -bt=dos -mm -1 bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
+          set "LIB=%WATCOM%\LIB386\DOS;%WATCOM%\LIB386;%WATCOM%\LIB386\NT"
+          if exist "%WATCOM%\BINNT64\wcl386.exe" (
+            "%WATCOM%\BINNT64\wcl386.exe" -bt=dos -l=dos4g bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
+          ) else if exist "%WATCOM%\BINNT\wcl386.exe" (
+            "%WATCOM%\BINNT\wcl386.exe" -bt=dos -l=dos4g bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
           ) else (
-            wcl386 -bt=dos -l=dos4g bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
+            wcl -bt=dos -mm -1 bgc.c -fe=dist\bgc_freedos.exe -dBGC_VAULT_KEY=0x13572468u
           )
 
       - name: 2. Build Win16 (bgc_win16.exe)
@@ -69,7 +70,15 @@ jobs:
         continue-on-error: true
         run: |
           set "INCLUDE=%WATCOM%\H;%WATCOM%\H\WIN"
-          wcl -bt=windows -ml -1 bgc.c -fe=dist\bgc_win16.exe -dBGC_VAULT_KEY=0x13572468u
+          set "LIB=%WATCOM%\LIB286\WIN;%WATCOM%\LIB286"
+          if exist "%WATCOM%\BINNT\wcl.exe" (
+            "%WATCOM%\BINNT\wcl.exe" -bt=windows -ml -1 bgc.c -fe=dist\bgc_win16.exe -dBGC_VAULT_KEY=0x13572468u
+          ) else if exist "%WATCOM%\BINNT64\wcl.exe" (
+            "%WATCOM%\BINNT64\wcl.exe" -bt=windows -ml -1 bgc.c -fe=dist\bgc_win16.exe -dBGC_VAULT_KEY=0x13572468u
+          ) else (
+            echo wcl.exe not found under WATCOM
+            exit /b 1
+          )
 
       - name: 3. Build Windows 9x (95 / 98 / ME)
         id: build_9x
