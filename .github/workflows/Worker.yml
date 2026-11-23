@@ -22,7 +22,7 @@ jobs:
         run: |
           if not exist dist mkdir dist
 
-      - name: Setup Open Watcom & MSYS2 MinGW
+      - name: Setup Open Watcom & MSYS2 MinGW32/MinGW64
         id: toolchains_setup
         continue-on-error: true
         run: |
@@ -36,9 +36,8 @@ jobs:
 
           if not exist "C:\msys64\mingw64\bin\gcc.exe" (
             choco install msys2 -y --no-progress
-            C:\msys64\usr\bin\bash.exe -lc "pacman --noconfirm -Sy mingw-w64-x86_64-gcc mingw-w64-i686-gcc"
           )
-          echo C:\msys64\mingw64\bin;C:\msys64\mingw32\bin>> "%GITHUB_PATH%"
+          C:\msys64\usr\bin\bash.exe -lc "pacman --noconfirm -Sy mingw-w64-x86_64-gcc mingw-w64-i686-gcc"
 
       # ======================================================================
       # 1. MS-DOS / FreeDOS (Open Watcom - Ilk Adim)
@@ -67,19 +66,19 @@ jobs:
         id: build_win95
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0400 -D_WIN32_WINDOWS=0x0400 bgc.c -o dist\bgc_win95.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0400 -D_WIN32_WINDOWS=0x0400 bgc.c -o dist\bgc_win95.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
 
       - name: 3b. Build Windows 98 (9x)
         id: build_win98
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0410 -D_WIN32_WINDOWS=0x0410 bgc.c -o dist\bgc_win98.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0410 -D_WIN32_WINDOWS=0x0410 bgc.c -o dist\bgc_win98.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
 
       - name: 3c. Build Windows ME (9x)
         id: build_winme
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0490 -D_WIN32_WINDOWS=0x0490 bgc.c -o dist\bgc_winme.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0490 -D_WIN32_WINDOWS=0x0490 bgc.c -o dist\bgc_winme.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
 
       # ======================================================================
       # 4. Tum Windows NT Surumleri (NT 3.1 .. Windows 11; XP32 -> XP64 sirali)
@@ -88,70 +87,69 @@ jobs:
         id: build_nt31
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x030A -D_WIN32_WINNT=0x030A bgc.c -o dist\bgc_nt31.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x030A -D_WIN32_WINNT=0x030A bgc.c -o dist\bgc_nt31.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4b. Build Windows NT 3.5
         id: build_nt35
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0332 -D_WIN32_WINNT=0x0332 bgc.c -o dist\bgc_nt35.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0332 -D_WIN32_WINNT=0x0332 bgc.c -o dist\bgc_nt35.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4c. Build Windows NT 3.51
         id: build_nt351
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0333 -D_WIN32_WINNT=0x0333 bgc.c -o dist\bgc_nt351.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0333 -D_WIN32_WINNT=0x0333 bgc.c -o dist\bgc_nt351.exe -lgdi32 -lwinmm -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4d. Build Windows NT 4.0
         id: build_nt40
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0400 -D_WIN32_WINNT=0x0400 bgc.c -o dist\bgc_nt40.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0400 -D_WIN32_WINNT=0x0400 bgc.c -o dist\bgc_nt40.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4e. Build Windows 2000 (NT 5.0)
         id: build_win2000
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0500 -D_WIN32_WINNT=0x0500 bgc.c -o dist\bgc_win2000.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0500 -D_WIN32_WINNT=0x0500 bgc.c -o dist\bgc_win2000.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4f. Build Windows XP 32-bit (XP32 - NT 5.1)
         id: build_xp32
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 bgc.c -o dist\bgc_xp32.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 bgc.c -o dist\bgc_xp32.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4g. Build Windows XP 64-bit (XP64 - NT 5.2)
         id: build_xp64
         continue-on-error: true
         run: |
-          gcc -m64 -O2 -DWINVER=0x0502 -D_WIN32_WINNT=0x0502 bgc.c -o dist\bgc_xp64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw64\bin\gcc.exe -O2 -DWINVER=0x0502 -D_WIN32_WINNT=0x0502 bgc.c -o dist\bgc_xp64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4h. Build Windows Vista (NT 6.0)
         id: build_vista
         continue-on-error: true
         run: |
-          gcc -m64 -O2 -DWINVER=0x0600 -D_WIN32_WINNT=0x0600 bgc.c -o dist\bgc_vista.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw64\bin\gcc.exe -O2 -DWINVER=0x0600 -D_WIN32_WINNT=0x0600 bgc.c -o dist\bgc_vista.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4i. Build Windows 7 (NT 6.1)
         id: build_win7
         continue-on-error: true
         run: |
-          gcc -m64 -O2 -DWINVER=0x0601 -D_WIN32_WINNT=0x0601 bgc.c -o dist\bgc_win7.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw64\bin\gcc.exe -O2 -DWINVER=0x0601 -D_WIN32_WINNT=0x0601 bgc.c -o dist\bgc_win7.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
       - name: 4j. Build Windows 8 / 8.1 (NT 6.2 / 6.3)
         id: build_win8
         continue-on-error: true
         run: |
-          gcc -m64 -O2 -DWINVER=0x0603 -D_WIN32_WINNT=0x0603 bgc.c -o dist\bgc_win8.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw64\bin\gcc.exe -O2 -DWINVER=0x0603 -D_WIN32_WINNT=0x0603 bgc.c -o dist\bgc_win8.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
-      - name: 4k. Build Windows 10 / 11 (NT 10.0)
+      - name: 4k. Build Windows 10 / 11 (NT 10.0 - x86 & x64)
         id: build_win10_11
         continue-on-error: true
         run: |
-          gcc -m32 -O2 -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00 bgc.c -o dist\bgc_win10_11_x86.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u && ^
-          gcc -m64 -O2 -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00 bgc.c -o dist\bgc_win10_11_x64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          C:\msys64\mingw32\bin\gcc.exe -O2 -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00 bgc.c -o dist\bgc_win10_11_x86.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u && ^
+          C:\msys64\mingw64\bin\gcc.exe -O2 -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00 bgc.c -o dist\bgc_win10_11_x64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
 
-      # Hata olsa bile onceki basarili tum ciktilari yukle
       - name: Upload all successful build artifacts
         if: always()
         uses: actions/upload-artifact@v4
