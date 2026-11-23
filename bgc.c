@@ -21,14 +21,15 @@
     #include <malloc.h>
 #else
     #define BGC_DOS_TARGET 0
-    #include <windows.h>
-    #include <mmsystem.h>
-    #if !defined(_WIN16) && !defined(__WINDOWS_386__)
+    #if !defined(_WIN16) && !defined(__WINDOWS_386__) && !defined(_M_I86)
         #include <winsock2.h>
+        #include <ws2tcpip.h>
         #define BGC_HAS_SOCKETS 1
     #else
         #define BGC_HAS_SOCKETS 0
     #endif
+    #include <windows.h>
+    #include <mmsystem.h>
 #endif
 
 #if !BGC_DOS_TARGET
@@ -238,7 +239,9 @@ typedef struct {
     HDC mem_dc;
     HBITMAP mem_bmp;
     HBITMAP old_bmp;
+#if (BGC_WIN_ARCH != 16)
     HFONT gdi_font;
+#endif
 #endif
 } BGC_Game;
 
@@ -361,7 +364,9 @@ static void init_gdi_double_buffer(BGC_Game *g, HWND hwnd) {
     g->mem_dc = NULL;
     g->mem_bmp = NULL;
     g->old_bmp = NULL;
+#if (BGC_WIN_ARCH != 16)
     g->gdi_font = NULL;
+#endif
 
     if (screen_dc) {
         g->mem_dc = CreateCompatibleDC(screen_dc);
@@ -376,20 +381,22 @@ static void init_gdi_double_buffer(BGC_Game *g, HWND hwnd) {
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Terminal"
             );
-#endif
             if (!g->gdi_font) {
                 g->gdi_font = (HFONT)GetStockObject(SYSTEM_FONT);
             }
+#endif
         }
         ReleaseDC(hwnd, screen_dc);
     }
 }
 
 static void cleanup_gdi_double_buffer(BGC_Game *g) {
+#if (BGC_WIN_ARCH != 16)
     if (g->gdi_font && g->gdi_font != (HFONT)GetStockObject(SYSTEM_FONT)) {
         DeleteObject(g->gdi_font);
         g->gdi_font = NULL;
     }
+#endif
     if (g->mem_dc) {
         if (g->old_bmp) {
             SelectObject(g->mem_dc, g->old_bmp);
@@ -437,10 +444,12 @@ static void draw_px(const BGC_Game *g, void *hdc_ptr, int x, int y, unsigned cha
     if (g->backend == BACKEND_VGA || !g->gdi_available) {
         raw_put_pixel(x, y, vga_idx);
     }
-#if !BGC_DOS_TARGET
+#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
     if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
         SetPixel((HDC)hdc_ptr, x, y, vga_to_gdi_color(vga_idx));
     }
+#else
+    (void)hdc_ptr;
 #endif
 }
 
@@ -459,7 +468,7 @@ static void draw_box(const BGC_Game *g, void *hdc_ptr, int x, int y, int w, int 
         }
     }
 
-#if !BGC_DOS_TARGET
+#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
     if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
         RECT rc;
         HBRUSH br = CreateSolidBrush(vga_to_gdi_color(fill_idx));
@@ -495,7 +504,7 @@ static void draw_box(const BGC_Game *g, void *hdc_ptr, int x, int y, int w, int 
 
 static void draw_circle_fill(const BGC_Game *g, void *hdc_ptr, int cx, int cy, int r, unsigned char fill_idx, int outline_black) {
     int dx, dy;
-#if !BGC_DOS_TARGET
+#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
     if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
         HBRUSH br = CreateSolidBrush(vga_to_gdi_color(fill_idx));
         HGDIOBJ old_br = SelectObject((HDC)hdc_ptr, br);
@@ -531,7 +540,7 @@ static void draw_line_simple(const BGC_Game *g, void *hdc_ptr, int x0, int y0, i
     int sy = (y0 < y1) ? 1 : -1;
     int err = dx - dy;
 
-#if !BGC_DOS_TARGET
+#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
     if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
         HPEN pen = CreatePen(PS_SOLID, 1, vga_to_gdi_color(col_idx));
         HGDIOBJ old_pen = SelectObject((HDC)hdc_ptr, pen);
@@ -603,7 +612,7 @@ static void blit_frame_to_screen(const BGC_Game *g, void *hdc_ptr, const unsigne
             }
         }
     }
-#if !BGC_DOS_TARGET
+#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
     if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
         for (y = 0; y < SCR_H; y++) {
             for (x = 0; x < SCR_W; x++) {
@@ -611,6 +620,8 @@ static void blit_frame_to_screen(const BGC_Game *g, void *hdc_ptr, const unsigne
             }
         }
     }
+#else
+    (void)hdc_ptr;
 #endif
 }
 
@@ -1081,7 +1092,7 @@ static void compare_score_over_wifi_ip(BGC_Game *g) {
     struct sockaddr_in peer;
     char send_buf[64];
     char recv_buf[64];
-    int timeout_ms = 600;
+    DWORD timeout_ms = 600;
     int remote_best = 0;
 
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -1153,31 +1164,63 @@ static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
     union REGS r_in, r_out;
     unsigned int jx, jy;
     unsigned char buttons_mask;
+    unsigned int carry_flag;
     (void)slot_idx;
 
     pad->dx = 0;
     pad->dy = 0;
 
+#if defined(__386__)
+    memset(&r_in, 0, sizeof(r_in));
+    r_in.h.ah = 0x84;
+    r_in.w.dx = 0x0000;
+    int386(0x15, &r_in, &r_out);
+    carry_flag = r_out.x.cflag & 1u;
+    if (carry_flag) {
+        pad->connected = 0;
+        update_pad_edges(pad, 0, 0, 0, 0);
+        return;
+    }
+    buttons_mask = (unsigned char)((~r_out.h.al) >> 4) & 0x0Fu;
+
+    memset(&r_in, 0, sizeof(r_in));
+    r_in.h.ah = 0x84;
+    r_in.w.dx = 0x0001;
+    int386(0x15, &r_in, &r_out);
+    carry_flag = r_out.x.cflag & 1u;
+    if (carry_flag || r_out.w.ax == 0 || r_out.w.bx == 0) {
+        pad->connected = 0;
+        update_pad_edges(pad, 0, 0, 0, 0);
+        return;
+    }
+    jx = (unsigned int)r_out.w.ax;
+    jy = (unsigned int)r_out.w.bx;
+#else
+    memset(&r_in, 0, sizeof(r_in));
     r_in.h.ah = 0x84;
     r_in.x.dx = 0x0000;
     int86(0x15, &r_in, &r_out);
-    if (r_out.x.cflag & 1) {
+    carry_flag = r_out.x.cflag & 1u;
+    if (carry_flag) {
         pad->connected = 0;
         update_pad_edges(pad, 0, 0, 0, 0);
         return;
     }
-    buttons_mask = (unsigned char)((~r_out.h.al) >> 4) & 0x0F;
+    buttons_mask = (unsigned char)((~r_out.h.al) >> 4) & 0x0Fu;
 
+    memset(&r_in, 0, sizeof(r_in));
     r_in.h.ah = 0x84;
     r_in.x.dx = 0x0001;
     int86(0x15, &r_in, &r_out);
-    if (r_out.x.cflag & 1 || r_out.x.ax == 0 || r_out.x.by == 0) {
+    carry_flag = r_out.x.cflag & 1u;
+    if (carry_flag || r_out.x.ax == 0 || r_out.x.bx == 0) {
         pad->connected = 0;
         update_pad_edges(pad, 0, 0, 0, 0);
         return;
     }
-    jx = r_out.x.ax;
-    jy = r_out.x.bx;
+    jx = (unsigned int)r_out.x.ax;
+    jy = (unsigned int)r_out.x.bx;
+#endif
 
     pad->connected = 1;
     if (!pad->calibrated) {
@@ -1989,9 +2032,14 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
 
 static void dos_set_video(unsigned char mode) {
     union REGS r;
+    memset(&r, 0, sizeof(r));
     r.h.ah = 0x00;
     r.h.al = mode;
+#if defined(__386__)
+    int386(0x10, &r, &r);
+#else
     int86(0x10, &r, &r);
+#endif
 }
 
 int main(int argc, char **argv) {
@@ -2257,13 +2305,16 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_PAINT:
             hdc = BeginPaint(hwnd, &ps);
             GetClientRect(hwnd, &rc);
+#if (BGC_WIN_ARCH != 16)
             if (g_win.backend == BACKEND_GDI && g_win.gdi_available && g_win.mem_dc) {
                 int cw = rc.right - rc.left;
                 int ch = rc.bottom - rc.top;
                 if (cw > 0 && ch > 0) {
                     StretchBlt(hdc, 0, 0, cw, ch, g_win.mem_dc, 0, 0, SCR_W, SCR_H, SRCCOPY);
                 }
-            } else {
+            } else
+#endif
+            {
                 memset(g_vga_buf, C_VGA_SKY, sizeof(g_vga_buf));
                 render_scene(&g_win, NULL);
                 blit_vga_buffer_to_gdi(hdc, &rc);
