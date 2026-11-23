@@ -1,0 +1,125 @@
+name: Build All Legacy & Modern Targets
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  build-sequential:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare output directory
+        run: |
+          if not exist dist mkdir dist
+
+      # 1. MS-DOS / FreeDOS (Open Watcom - ilk adım)
+      - name: Setup Open Watcom
+        id: ow_setup
+        continue-on-error: true
+        run: |
+          choco install openwatcom -y --no-progress
+          set "WATCOM=C:\WATCOM"
+          if not exist "%WATCOM%\BINNT64" (
+            for /d %%D in ("C:\*WATCOM*") do set "WATCOM=%%~fD"
+          )
+          echo WATCOM=%WATCOM%>> "%GITHUB_ENV%"
+          echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
+
+      - name: 1. Build MS-DOS / FreeDOS (Open Watcom)
+        id: build_dos
+        continue-on-error: true
+        run: |
+          set "INCLUDE=%WATCOM%\H;%WATCOM%\H\NT"
+          wcl -bt=dos -mm -1 bgc.c -fe=dist\bgc_dos.exe -dBGC_VAULT_KEY=0x13572468u
+
+      # 2. Win16 (Open Watcom)
+      - name: 2. Build Win16 (Open Watcom)
+        id: build_win16
+        continue-on-error: true
+        run: |
+          set "INCLUDE=%WATCOM%\H;%WATCOM%\H\WIN"
+          wcl -bt=windows -ml -1 bgc.c -fe=dist\bgc_win16.exe -dBGC_VAULT_KEY=0x13572468u
+
+      # 3. Win9x / 2000 (32-bit x86 subsystem target)
+      - name: 3. Build Win9x / 2000 (x86)
+        id: build_win9x_2k
+        continue-on-error: true
+        run: |
+          where gcc >nul 2>nul && (
+            gcc -m32 -O2 -D_WIN32_WINNT=0x0500 bgc.c -o dist\bgc_win9x_2k.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          ) || (
+            echo GCC not found for Win9x/2000 step
+            exit /b 1
+          )
+
+      # 4. XP32 (XP 64'ten hemen önce)
+      - name: 4. Build Windows XP 32-bit (XP32)
+        id: build_xp32
+        continue-on-error: true
+        run: |
+          where gcc >nul 2>nul && (
+            gcc -m32 -O2 -D_WIN32_WINNT=0x0501 bgc.c -o dist\bgc_xp32.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          ) || (
+            echo GCC not found for XP32 step
+            exit /b 1
+          )
+
+      # 5. XP64 (XP32'den hemen sonra)
+      - name: 5. Build Windows XP 64-bit (XP64)
+        id: build_xp64
+        continue-on-error: true
+        run: |
+          where gcc >nul 2>nul && (
+            gcc -m64 -O2 -D_WIN32_WINNT=0x0502 bgc.c -o dist\bgc_xp64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          ) || (
+            echo GCC not found for XP64 step
+            exit /b 1
+          )
+
+      # 6. Modern Win32 & Win64
+      - name: 6. Build Win32 & Win64
+        id: build_win_modern
+        continue-on-error: true
+        run: |
+          where gcc >nul 2>nul && (
+            gcc -m32 -O2 bgc.c -o dist\bgc_win32.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u && ^
+            gcc -m64 -O2 bgc.c -o dist\bgc_win64.exe -lgdi32 -lwinmm -lws2_32 -DBGC_VAULT_KEY=0x13572468u
+          ) || (
+            echo GCC not found for Win32/Win64 step
+            exit /b 1
+          )
+
+      # Hata olsa bile şimdiye kadar üretilen tüm başarılı çıktıları gönder
+      - name: Upload successful build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgc-builds
+          path: dist/*
+          if-no-files-found: ignore
+
+      # Tüm adımların özetini kontrol et; herhangi biri başarısızsa job'ı failed yap
+      - name: Enforce build status check
+        if: always()
+        run: |
+          set "FAILED=0"
+          if not "%build_dos_outcome%"=="success" set "FAILED=1"
+          if not "%build_win16_outcome%"=="success" set "FAILED=1"
+          if not "%build_win9x_2k_outcome%"=="success" set "FAILED=1"
+          if not "%build_xp32_outcome%"=="success" set "FAILED=1"
+          if not "%build_xp64_outcome%"=="success" set "FAILED=1"
+          if not "%build_win_modern_outcome%"=="success" set "FAILED=1"
+          if "%FAILED%"=="1" (
+            echo One or more build targets failed. Successful prior artifacts were uploaded.
+            exit /b 1
+          )
