@@ -6,11 +6,11 @@
  * + RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR
  * + UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN + SAVE TO DEVICE)
  * + MULTI-GOLD, MULTI-BUG & GOLD BAR COLLECTIBLE
- * + HOLD + TAP SMOOTH ASCENT & FULL MAIN MENU GAMEPAD SUPPORT
+ * + HOLD + TAP SMOOTH ASCENT & FULL MAIN MENU MULTI-INPUT (MOUSE+KEY+PAD)
  * + NO PASSIVE HEALTH DRAIN (HEALTH CHANGES ONLY ON GOLD / BAR / BUG)
  * + GAME OVER AT PAUSE POSITION WITH RETRY & MAIN MENU BUTTONS
  * + BEERACE 2P SECOND CONTROLLER LOBBY & COMPACT SPLIT-SCREEN SPRITES
- * + FULL MOUSE SUPPORT (ALL MENUS + GAMEPLAY + PAD2 MODE + L+R / R-CLICK PAUSE)
+ * + SMOOTH MOUSE FOLLOW IN ALL MODES + SELECTABLE CTRL SOURCE + BGCOPT.DAT
  * + WIN 1.0 / 2.0 / 3.0 / 3.1X / BOB / NT 3.1 / MT 5.0 WORKSTATION & DOS
  * ============================================================================ */
 
@@ -87,6 +87,7 @@
 #define MAX_BUGS  4
 
 #define VAULT_FILE      "BGCSCV.DAT"
+#define OPTIONS_FILE    "BGCOPT.DAT"
 #define REPLAY_FILE     "BGCRPL.RPL"
 #define VIDEO_FILE      "BGCVDO.VDO"
 #define SHOT_FILE       "BGCSHOT.BMP"
@@ -121,6 +122,13 @@
 
 #define CTRL_SPEED_NORMAL 0
 #define CTRL_SPEED_FAST   1
+
+#define CTRL_SRC_AUTO     0
+#define CTRL_SRC_MOUSE    1
+#define CTRL_SRC_KEYBOARD 2
+#define CTRL_SRC_GAMEPAD  3
+
+#define SETTINGS_COUNT 7
 
 #define C_VGA_SKY     11
 #define C_VGA_GRASS   2
@@ -181,6 +189,7 @@ typedef struct {
     int click_right;
     int pause_chord_fired;
     int act_as_pad2;
+    int follow_mode;
 } BGC_Mouse;
 
 typedef struct {
@@ -282,6 +291,7 @@ typedef struct {
     int gdi_available;
     int pause_style;
     int ctrl_speed_mode;
+    int ctrl_source;
     BGC_Pad pad1;
     BGC_Pad pad2;
     BGC_Mouse mouse;
@@ -773,7 +783,7 @@ static void update_rumble_timer(BGC_Game *g) {
 }
 
 /* ============================================================================
- * 3. BUILD-TIME SECRET KEY VAULT (BGCSCV.DAT)
+ * 3. BUILD-TIME SECRET KEY VAULTS (BGCSCV.DAT & BGCOPT.DAT)
  * ============================================================================ */
 
 static unsigned char obfuscate_byte(unsigned char b, unsigned int idx, unsigned int seed) {
@@ -797,6 +807,16 @@ static unsigned int compute_vault_tag(int best_s, int last_s, unsigned int seed)
     h ^= ((ub >> 16) & 0xFFu); h *= 0x01000193u;
     h ^= (ul & 0xFFu); h *= 0x01000193u;
     h ^= ((ul >> 8) & 0xFFu); h *= 0x01000193u;
+    return h;
+}
+
+static unsigned int compute_options_tag(const unsigned char *opts, int count, unsigned int seed) {
+    unsigned int h = 0x811C9DC5u ^ (seed * 13u);
+    int i;
+    for (i = 0; i < count; i++) {
+        h ^= (unsigned int)opts[i];
+        h *= 0x01000193u;
+    }
     return h;
 }
 
@@ -913,6 +933,82 @@ static void record_score_secure(BGC_Game *g, int score) {
         g->best_score = score;
     }
     write_obfuscated_vault(g);
+}
+
+static void write_obfuscated_options(const BGC_Game *g) {
+    unsigned char raw[16];
+    unsigned char enc[16];
+    unsigned int seed = (unsigned int)BGC_VAULT_KEY;
+    unsigned int tag;
+    int i;
+    FILE *fp;
+
+    memset(raw, 0, sizeof(raw));
+    raw[0] = 'B'; raw[1] = 'G'; raw[2] = 'C'; raw[3] = 'O';
+    raw[4] = (unsigned char)((g->backend == BACKEND_GDI) ? BACKEND_GDI : BACKEND_VGA);
+    raw[5] = (unsigned char)((g->pause_style == PAUSE_STYLE_COMPACT) ? PAUSE_STYLE_COMPACT : PAUSE_STYLE_FULL);
+    raw[6] = (unsigned char)((g->ctrl_speed_mode == CTRL_SPEED_FAST) ? CTRL_SPEED_FAST : CTRL_SPEED_NORMAL);
+    raw[7] = (unsigned char)(g->mouse.follow_mode ? 1 : 0);
+    raw[8] = (unsigned char)(g->mouse.act_as_pad2 ? 1 : 0);
+    raw[9] = (unsigned char)(g->ctrl_source & 0x03);
+
+    tag = compute_options_tag(&raw[4], 6, seed);
+    raw[12] = (unsigned char)(tag & 0xFFu);
+    raw[13] = (unsigned char)((tag >> 8) & 0xFFu);
+    raw[14] = (unsigned char)((tag >> 16) & 0xFFu);
+    raw[15] = (unsigned char)((tag >> 24) & 0xFFu);
+
+    for (i = 0; i < 16; i++) {
+        enc[i] = obfuscate_byte(raw[i], (unsigned int)i, seed);
+    }
+
+    unmark_readonly_for_write(OPTIONS_FILE);
+    fp = fopen(OPTIONS_FILE, "wb");
+    if (fp) {
+        fwrite(enc, 1, 16, fp);
+        fclose(fp);
+    }
+    mark_file_hidden_if_possible(OPTIONS_FILE);
+}
+
+static void read_obfuscated_options(BGC_Game *g) {
+    unsigned char enc[16];
+    unsigned char raw[16];
+    unsigned int seed = (unsigned int)BGC_VAULT_KEY;
+    unsigned int read_tag, calc_tag;
+    int i;
+    FILE *fp;
+
+    fp = fopen(OPTIONS_FILE, "rb");
+    if (!fp) return;
+
+    if (fread(enc, 1, 16, fp) != 16) {
+        fclose(fp);
+        return;
+    }
+    fclose(fp);
+
+    for (i = 0; i < 16; i++) {
+        raw[i] = deobfuscate_byte(enc[i], (unsigned int)i, seed);
+    }
+
+    if (raw[0] != 'B' || raw[1] != 'G' || raw[2] != 'C' || raw[3] != 'O') {
+        return;
+    }
+
+    read_tag = (unsigned int)raw[12] |
+               ((unsigned int)raw[13] << 8) |
+               ((unsigned int)raw[14] << 16) |
+               ((unsigned int)raw[15] << 24);
+    calc_tag = compute_options_tag(&raw[4], 6, seed);
+    if (read_tag != calc_tag) return;
+
+    if (raw[4] == BACKEND_GDI || raw[4] == BACKEND_VGA) g->backend = (int)raw[4];
+    if (raw[5] == PAUSE_STYLE_FULL || raw[5] == PAUSE_STYLE_COMPACT) g->pause_style = (int)raw[5];
+    if (raw[6] == CTRL_SPEED_NORMAL || raw[6] == CTRL_SPEED_FAST) g->ctrl_speed_mode = (int)raw[6];
+    g->mouse.follow_mode = raw[7] ? 1 : 0;
+    g->mouse.act_as_pad2 = raw[8] ? 1 : 0;
+    if (raw[9] <= CTRL_SRC_GAMEPAD) g->ctrl_source = (int)raw[9];
 }
 
 /* ============================================================================
@@ -1176,6 +1272,7 @@ static void init_mouse_state(BGC_Mouse *m) {
     m->prev_x = m->x;
     m->prev_y = m->y;
     m->act_as_pad2 = 1;
+    m->follow_mode = 1;
 }
 
 static void finalize_mouse_frame(BGC_Mouse *m) {
@@ -1624,8 +1721,15 @@ static void draw_mouse_cursor(const BGC_Game *g, void *hdc_ptr) {
 }
 
 /* ============================================================================
- * 8. SINGLE & BEERACE GAMEPLAY LOGIC (SMOOTH ASCENT + HOLD/TAP + MULTI-SPAWN)
+ * 8. SINGLE & BEERACE GAMEPLAY LOGIC (SMOOTH FOLLOW + HOLD/TAP + MULTI-SPAWN)
  * ============================================================================ */
+
+static int mouse_allowed_in_mode(const BGC_Game *g) {
+    if (g->ctrl_source == CTRL_SRC_KEYBOARD || g->ctrl_source == CTRL_SRC_GAMEPAD) {
+        return 0;
+    }
+    return 1;
+}
 
 static int random_y_in_range(int min_y, int max_y) {
     int span = max_y - min_y;
@@ -1719,7 +1823,7 @@ static void open_beerace_lobby(BGC_Game *g) {
     init_racer(&g->p2, half_w, SCR_H, 19);
     g->race_started = 0;
     g->p1_ready = 1;
-    g->p2_ready = (g->pad2.connected || (g->mouse.available && g->mouse.act_as_pad2)) ? 1 : 0;
+    g->p2_ready = (g->pad2.connected || (g->mouse.available && g->mouse.act_as_pad2 && mouse_allowed_in_mode(g))) ? 1 : 0;
     g->p2_is_pad = g->pad2.connected ? 1 : 0;
     g->race_over = 0;
     g->race_winner = 0;
@@ -1767,8 +1871,34 @@ static void apply_smooth_move_single(BGC_Game *g, int dx, int dy, int is_tap) {
     }
 }
 
+static void update_smooth_mouse_follow_single(BGC_Game *g) {
+    int diff_x, diff_y;
+    int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 5;
+    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 9 : 7;
+
+    if (!g->mouse.follow_mode || !mouse_allowed_in_mode(g)) return;
+    if (!g->mouse.available) return;
+    if (g->screen != SCREEN_PLAYING || g->game_over) return;
+
+    diff_x = g->mouse.x - g->bee_x;
+    diff_y = g->mouse.y - g->bee_y;
+
+    if (abs(diff_x) > 2) {
+        g->bee_vx = diff_x / gain;
+        if (g->bee_vx > max_spd) g->bee_vx = max_spd;
+        if (g->bee_vx < -max_spd) g->bee_vx = -max_spd;
+    }
+    if (abs(diff_y) > 2) {
+        g->bee_vy = diff_y / gain;
+        if (g->bee_vy > max_spd) g->bee_vy = max_spd;
+        if (g->bee_vy < -max_spd) g->bee_vy = -max_spd;
+    }
+}
+
 static void update_smooth_bee_physics(BGC_Game *g) {
     if (g->screen != SCREEN_PLAYING || g->game_over) return;
+
+    update_smooth_mouse_follow_single(g);
 
     g->bee_x += g->bee_vx;
     g->bee_y += g->bee_vy;
@@ -1804,6 +1934,35 @@ static void apply_smooth_move_racer(const BGC_Game *g, Racer *r, int dx, int dy,
     }
 }
 
+static void update_smooth_mouse_follow_racer(const BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offset) {
+    int target_x = g->mouse.x - x_offset;
+    int target_y = g->mouse.y;
+    int diff_x, diff_y;
+    int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 5;
+    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 8 : 6;
+
+    if (!g->mouse.follow_mode || !mouse_allowed_in_mode(g)) return;
+    if (!g->mouse.available || r->dead) return;
+    if (target_x < 8) target_x = 8;
+    if (target_x > pane_w - 8) target_x = pane_w - 8;
+    if (target_y < 24) target_y = 24;
+    if (target_y > pane_h - 25) target_y = pane_h - 25;
+
+    diff_x = target_x - r->x;
+    diff_y = target_y - r->y;
+
+    if (abs(diff_x) > 2) {
+        r->vx = diff_x / gain;
+        if (r->vx > max_spd) r->vx = max_spd;
+        if (r->vx < -max_spd) r->vx = -max_spd;
+    }
+    if (abs(diff_y) > 2) {
+        r->vy = diff_y / gain;
+        if (r->vy > max_spd) r->vy = max_spd;
+        if (r->vy < -max_spd) r->vy = -max_spd;
+    }
+}
+
 static void update_smooth_racer_physics(Racer *r, int pane_w, int pane_h) {
     if (r->dead) return;
 
@@ -1819,10 +1978,13 @@ static void update_smooth_racer_physics(Racer *r, int pane_w, int pane_h) {
     if (r->y > pane_h - 25) { r->y = pane_h - 25; r->vy = 0; }
 }
 
-static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int seed_offset) {
+static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offset, int is_p2, int seed_offset) {
     int i;
     if (r->dead) return;
 
+    if (is_p2 && g->mouse.act_as_pad2) {
+        update_smooth_mouse_follow_racer(g, r, pane_w, pane_h, x_offset);
+    }
     update_smooth_racer_physics(r, pane_w, pane_h);
 
     for (i = 0; i < MAX_GOLDS; i++) {
@@ -1884,8 +2046,8 @@ static void step_beerace(BGC_Game *g) {
         if (!g->p2.dead) g->p2.health += 2;
     }
 
-    step_racer(g, &g->p1, half_w, SCR_H, 7);
-    step_racer(g, &g->p2, half_w, SCR_H, 19);
+    step_racer(g, &g->p1, half_w, SCR_H, 0, 0, 7);
+    step_racer(g, &g->p2, half_w, SCR_H, half_w, 1, 19);
 
     if (g->p1.dead && !g->p2.dead) {
         g->race_over = 1;
@@ -2061,6 +2223,7 @@ static void activate_gameover_item(BGC_Game *g, int is_race) {
         g->screen = SCREEN_MAIN_MENU;
     } else if (g->gameover_idx == 2) {
         g->pause_style = (g->pause_style == PAUSE_STYLE_FULL) ? PAUSE_STYLE_COMPACT : PAUSE_STYLE_FULL;
+        write_obfuscated_options(g);
     }
 }
 
@@ -2073,11 +2236,15 @@ static void toggle_setting_item(BGC_Game *g) {
     } else if (g->settings_idx == 2) {
         g->ctrl_speed_mode = (g->ctrl_speed_mode == CTRL_SPEED_NORMAL) ? CTRL_SPEED_FAST : CTRL_SPEED_NORMAL;
     } else if (g->settings_idx == 3) {
-        g->prev_screen = SCREEN_SETTINGS;
-        g->screen = SCREEN_CONTROLS;
+        g->mouse.follow_mode = g->mouse.follow_mode ? 0 : 1;
     } else if (g->settings_idx == 4) {
+        g->ctrl_source = (g->ctrl_source + 1) % 4;
+    } else if (g->settings_idx == 5) {
+        g->mouse.act_as_pad2 = g->mouse.act_as_pad2 ? 0 : 1;
+    } else if (g->settings_idx == 6) {
         g->screen = g->prev_screen;
     }
+    write_obfuscated_options(g);
 }
 
 static void activate_main_item(BGC_Game *g, int *running) {
@@ -2131,7 +2298,10 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
                 }
             }
         }
-    } else if (g->screen == SCREEN_MEDIA_VAULT) {
+        return;
+    }
+
+    if (g->screen == SCREEN_MEDIA_VAULT) {
         if (m->click_left) {
             if (point_in_box(m->x, m->y, 12, 6, 92, 10)) {
                 g->media_tab = MEDIA_TAB_PHOTO;
@@ -2150,7 +2320,10 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
                 return;
             }
         }
-    } else if (g->screen == SCREEN_PLAYING) {
+        return;
+    }
+
+    if (g->screen == SCREEN_PLAYING) {
         if (g->game_over) {
             int bx = 58, by = 42, bw = 204, i;
             for (i = 0; i < 3; i++) {
@@ -2173,7 +2346,8 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
             return;
         }
 
-        if (m->left_down || m->x != m->prev_x || m->y != m->prev_y) {
+        if (!m->follow_mode && mouse_allowed_in_mode(g) &&
+            (m->left_down || m->x != m->prev_x || m->y != m->prev_y)) {
             int mdx = 0, mdy = 0;
             if (m->x < g->bee_x - 4) mdx = -1;
             else if (m->x > g->bee_x + 4) mdx = 1;
@@ -2185,7 +2359,8 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
         }
     } else if (g->screen == SCREEN_BEERACE) {
         if (!g->race_started) {
-            if (m->act_as_pad2 && (m->x != m->prev_x || m->y != m->prev_y || m->click_left)) {
+            if (m->act_as_pad2 && mouse_allowed_in_mode(g) &&
+                (m->x != m->prev_x || m->y != m->prev_y || m->click_left)) {
                 g->p2_ready = 1;
             }
             if (m->click_left && point_in_box(m->x, m->y, 54, 108, 212, 20) && g->p2_ready) {
@@ -2214,7 +2389,8 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
             g->screen = SCREEN_PAUSED;
             return;
         }
-        if (m->act_as_pad2 && (m->left_down || m->x != m->prev_x || m->y != m->prev_y)) {
+        if (!m->follow_mode && m->act_as_pad2 && mouse_allowed_in_mode(g) &&
+            (m->left_down || m->x != m->prev_x || m->y != m->prev_y)) {
             int half_w = SCR_W / 2;
             int local_x = (m->x >= half_w) ? (m->x - half_w) : m->x;
             int pdx = 0, pdy = 0;
@@ -2248,9 +2424,9 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
         }
     } else if (g->screen == SCREEN_SETTINGS) {
         int i;
-        for (i = 0; i < 5; i++) {
-            int y = 50 + i * 22;
-            if (point_in_box(m->x, m->y, 50, y - 3, 220, 12)) {
+        for (i = 0; i < SETTINGS_COUNT; i++) {
+            int y = 40 + i * 18;
+            if (point_in_box(m->x, m->y, 44, y - 2, 232, 12)) {
                 g->settings_idx = i;
                 if (m->click_left) {
                     toggle_setting_item(g);
@@ -2260,7 +2436,7 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
         }
         if (m->click_right) g->screen = g->prev_screen;
     } else if (g->screen == SCREEN_CONTROLS) {
-        if (m->click_left && point_in_box(m->x, m->y, 84, 148, 152, 15)) {
+        if (m->click_left && point_in_box(m->x, m->y, 84, 152, 152, 15)) {
             g->screen = g->prev_screen;
         } else if (m->click_right) {
             g->screen = g->prev_screen;
@@ -2455,44 +2631,54 @@ static void render_controls(BGC_Game *g, void *hdc_ptr) {
     draw_box(g, hdc_ptr, 20, 16, 280, 168, C_VGA_PANEL, 1);
     draw_str_5x7(g, hdc_ptr, 118, 24, "CONTROLS", C_VGA_BLACK);
 
-    draw_str_5x7(g, hdc_ptr, 28, 42, "P1 MOVE : ARROWS / WASD / PAD1", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 56, "MOUSE   : MOVE + L+R OR R PAUSE", C_VGA_RED);
-    draw_str_5x7(g, hdc_ptr, 28, 70, "P2 RACE : IJKL / TFGH / PAD2/MSE", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 84, "COIN:+10 BAR:+30 BUG:-35", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 98, "SHOT BMP: F12  |  VIDEO VDO: V", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 112, "WIN1-3.1X/BOB/NT3.1/MT5/DOS OK", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 42, "MENU    : MOUSE + KEY + PAD ALL OK", C_VGA_GRASS);
+    draw_str_5x7(g, hdc_ptr, 28, 56, "P1 MOVE : ARROWS / WASD / PAD1", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 70, "MOUSE   : FOLLOW + L+R OR R PAUSE", C_VGA_RED);
+    draw_str_5x7(g, hdc_ptr, 28, 84, "P2 RACE : IJKL / TFGH / PAD2/MSE", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 98, "COIN:+10 BAR:+30 BUG:-35", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 112, "OPTS SAVED: BGCOPT.DAT  BMP:F12", C_VGA_BLACK);
 
-    draw_box(g, hdc_ptr, 84, 148, 152, 15, C_VGA_YELLOW, 1);
-    draw_str_5x7(g, hdc_ptr, 92, 152, "> CLICK OR ESC BACK", C_VGA_BLACK);
+    draw_box(g, hdc_ptr, 84, 152, 152, 15, C_VGA_YELLOW, 1);
+    draw_str_5x7(g, hdc_ptr, 92, 156, "> CLICK OR ESC BACK", C_VGA_BLACK);
     draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_settings(BGC_Game *g, void *hdc_ptr) {
-    char l_gfx[48], l_pau[48], l_spd[48];
-    const char *rows[5];
+    char l_gfx[48], l_pau[48], l_spd[48], l_flw[48], l_src[48], l_mp2[48];
+    const char *src_name = "AUTO";
+    const char *rows[SETTINGS_COUNT];
     int i;
+
+    if (g->ctrl_source == CTRL_SRC_MOUSE) src_name = "MOUSE";
+    else if (g->ctrl_source == CTRL_SRC_KEYBOARD) src_name = "KEYBRD";
+    else if (g->ctrl_source == CTRL_SRC_GAMEPAD) src_name = "PAD";
 
     sprintf(l_gfx, "GFX MODE  : %s", (g->backend == BACKEND_GDI && g->gdi_available) ? "GDI" : "VGA");
     sprintf(l_pau, "PAUSE UI  : %s", (g->pause_style == PAUSE_STYLE_COMPACT) ? "COMPACT" : "FULL");
     sprintf(l_spd, "CTRL SPEED: %s", (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? "FAST" : "NORMAL");
+    sprintf(l_flw, "MSE FOLLOW: %s", g->mouse.follow_mode ? "ON" : "OFF");
+    sprintf(l_src, "CTRL SRC  : %s", src_name);
+    sprintf(l_mp2, "MSE AS PAD2: %s", g->mouse.act_as_pad2 ? "ON" : "OFF");
 
     rows[0] = l_gfx;
     rows[1] = l_pau;
     rows[2] = l_spd;
-    rows[3] = "CONTROLS";
-    rows[4] = "BACK";
+    rows[3] = l_flw;
+    rows[4] = l_src;
+    rows[5] = l_mp2;
+    rows[6] = "BACK (SAVED TO BGCOPT.DAT)";
 
     draw_viewport_env(g, hdc_ptr, 0, 0, SCR_W, SCR_H);
-    draw_box(g, hdc_ptr, 38, 24, 244, 148, C_VGA_PANEL, 1);
-    draw_str_5x7(g, hdc_ptr, 118, 32, "SETTINGS", C_VGA_BLACK);
+    draw_box(g, hdc_ptr, 32, 18, 256, 164, C_VGA_PANEL, 1);
+    draw_str_5x7(g, hdc_ptr, 118, 24, "SETTINGS", C_VGA_BLACK);
 
-    for (i = 0; i < 5; i++) {
-        int y = 50 + i * 22;
+    for (i = 0; i < SETTINGS_COUNT; i++) {
+        int y = 40 + i * 18;
         if (g->settings_idx == i) {
-            draw_box(g, hdc_ptr, 50, y - 3, 220, 12, C_VGA_YELLOW, 1);
-            draw_str_5x7(g, hdc_ptr, 56, y, ">", C_VGA_BLACK);
+            draw_box(g, hdc_ptr, 44, y - 2, 232, 12, C_VGA_YELLOW, 1);
+            draw_str_5x7(g, hdc_ptr, 50, y, ">", C_VGA_BLACK);
         }
-        draw_str_5x7(g, hdc_ptr, 68, y, rows[i], C_VGA_BLACK);
+        draw_str_5x7(g, hdc_ptr, 62, y, rows[i], C_VGA_BLACK);
     }
     draw_mouse_cursor(g, hdc_ptr);
 }
@@ -2690,7 +2876,11 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
     poll_single_pad(&g->pad1, 0);
     poll_single_pad(&g->pad2, 1);
 
-    if (!g->pad2.connected && g->mouse.act_as_pad2 && g->mouse.available) {
+    if (g->screen != SCREEN_MAIN_MENU && g->ctrl_source == CTRL_SRC_KEYBOARD) {
+        return;
+    }
+
+    if (!g->pad2.connected && g->mouse.act_as_pad2 && g->mouse.available && mouse_allowed_in_mode(g)) {
         int mdx = 0, mdy = 0;
         if (g->mouse.x < SCR_W / 2 - 12) mdx = -1;
         else if (g->mouse.x > SCR_W / 2 + 12) mdx = 1;
@@ -2739,7 +2929,7 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
             }
             return;
         }
-        if (pad_dir_x != 0 || pad_dir_y != 0) {
+        if (!g->mouse.follow_mode && (pad_dir_x != 0 || pad_dir_y != 0)) {
             apply_smooth_move_single(g, pad_dir_x, pad_dir_y, 0);
         }
         if (g->pad1.btn_pause || g->pad1.btn_back || g->pad2.btn_pause || g->pad2.btn_back) {
@@ -2781,7 +2971,7 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
         if (g->pad1.dx != 0 || g->pad1.dy != 0) {
             apply_smooth_move_racer(g, &g->p1, g->pad1.dx, g->pad1.dy, 0);
         }
-        if (g->pad2.dx != 0 || g->pad2.dy != 0) {
+        if (!g->mouse.follow_mode && (g->pad2.dx != 0 || g->pad2.dy != 0)) {
             apply_smooth_move_racer(g, &g->p2, g->pad2.dx, g->pad2.dy, 0);
         }
         if (g->pad1.btn_pause || g->pad2.btn_pause) {
@@ -2801,8 +2991,8 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
         }
     } else if (g->screen == SCREEN_SETTINGS) {
         if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
-            if (pad_dir_y < 0) g->settings_idx = (g->settings_idx + 4) % 5;
-            else if (pad_dir_y > 0) g->settings_idx = (g->settings_idx + 1) % 5;
+            if (pad_dir_y < 0) g->settings_idx = (g->settings_idx + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
+            else if (pad_dir_y > 0) g->settings_idx = (g->settings_idx + 1) % SETTINGS_COUNT;
             g->pad1.nav_cooldown = 7;
         }
         if ((g->pad1.btn_confirm || g->pad2.btn_confirm) || (pad_dir_x != 0 && g->pad1.nav_cooldown == 0)) {
@@ -2864,8 +3054,10 @@ int main(int argc, char **argv) {
     game.backend = BACKEND_VGA;
     game.pause_style = PAUSE_STYLE_FULL;
     game.ctrl_speed_mode = CTRL_SPEED_FAST;
+    game.ctrl_source = CTRL_SRC_AUTO;
     game.screen = SCREEN_MAIN_MENU;
     read_obfuscated_vault(&game);
+    read_obfuscated_options(&game);
     for (i = 0; i < MAX_GOLDS; i++) spawn_single_gold_slot(&game, i);
     for (i = 0; i < MAX_BUGS;  i++) spawn_single_bug_slot(&game, i);
     spawn_single_gold_bar(&game);
@@ -2892,8 +3084,8 @@ int main(int argc, char **argv) {
                     if (ext == 72) game.pause_idx = (game.pause_idx + 2) % 3;
                     if (ext == 80) game.pause_idx = (game.pause_idx + 1) % 3;
                 } else if (game.screen == SCREEN_SETTINGS) {
-                    if (ext == 72) game.settings_idx = (game.settings_idx + 4) % 5;
-                    if (ext == 80) game.settings_idx = (game.settings_idx + 1) % 5;
+                    if (ext == 72) game.settings_idx = (game.settings_idx + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
+                    if (ext == 80) game.settings_idx = (game.settings_idx + 1) % SETTINGS_COUNT;
                     if (ext == 75 || ext == 77) toggle_setting_item(&game);
                 } else if (game.screen == SCREEN_PLAYING) {
                     if (game.game_over) {
@@ -3001,6 +3193,7 @@ int main(int argc, char **argv) {
         delay(12);
     }
 
+    write_obfuscated_options(&game);
     if (game.video_recording) save_video_to_file(&game);
     free_media_buffers(&game);
 #if BGC_DJGPP_TARGET
@@ -3027,6 +3220,7 @@ static void detect_backend(BGC_Game *g, const char *cmd) {
         if (strstr(cmd, "--mouse-pad2-off") != NULL) g->mouse.act_as_pad2 = 0;
         else if (strstr(cmd, "--mouse-pad2") != NULL) g->mouse.act_as_pad2 = 1;
     }
+    read_obfuscated_options(g);
 }
 
 static void blit_vga_buffer_to_gdi(HDC hdc, const RECT *rc) {
@@ -3239,8 +3433,8 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (wParam == '3') { g_win.menu_idx = 0; g_win.screen = SCREEN_MAIN_MENU; }
                 if (wParam == 'P' || wParam == VK_ESCAPE) g_win.screen = g_win.prev_screen;
             } else if (g_win.screen == SCREEN_SETTINGS) {
-                if (wParam == VK_UP)   g_win.settings_idx = (g_win.settings_idx + 4) % 5;
-                if (wParam == VK_DOWN) g_win.settings_idx = (g_win.settings_idx + 1) % 5;
+                if (wParam == VK_UP)   g_win.settings_idx = (g_win.settings_idx + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
+                if (wParam == VK_DOWN) g_win.settings_idx = (g_win.settings_idx + 1) % SETTINGS_COUNT;
                 if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_RETURN || wParam == VK_SPACE) {
                     toggle_setting_item(&g_win);
                 }
@@ -3275,6 +3469,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
 
         case WM_DESTROY:
+            write_obfuscated_options(&g_win);
             apply_rumble_and_dualsense(0, 0, 0, 0, 0);
             if (g_win.video_recording) save_video_to_file(&g_win);
             cleanup_gdi_double_buffer(&g_win);
@@ -3304,6 +3499,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     g_win.screen = SCREEN_MAIN_MENU;
     g_win.pause_style = PAUSE_STYLE_FULL;
     g_win.ctrl_speed_mode = CTRL_SPEED_FAST;
+    g_win.ctrl_source = CTRL_SRC_AUTO;
     read_obfuscated_vault(&g_win);
     detect_backend(&g_win, lpCmd);
 
@@ -3336,6 +3532,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+    write_obfuscated_options(&g_win);
     apply_rumble_and_dualsense(0, 0, 0, 0, 0);
     cleanup_gdi_double_buffer(&g_win);
     free_media_buffers(&g_win);
