@@ -249,6 +249,7 @@ typedef struct {
     HDC mem_dc;
     HBITMAP mem_bmp;
     HBITMAP old_bmp;
+    unsigned int *dib_pixels;
 #if (BGC_WIN_ARCH != 16)
     HFONT gdi_font;
 #endif
@@ -263,11 +264,13 @@ static unsigned char g_vga_buf[SCR_W * SCR_H];
 
 #if BGC_DJGPP_TARGET
 static int g_djgpp_nearptr_ready = 0;
+static unsigned char *g_djgpp_vram = NULL;
 
 static void bgc_dos_init_vram(void) {
     if (!g_djgpp_nearptr_ready) {
         if (__djgpp_nearptr_enable()) {
             g_djgpp_nearptr_ready = 1;
+            g_djgpp_vram = (unsigned char *)(0xA0000 + __djgpp_conventional_base);
         }
     }
 }
@@ -276,13 +279,13 @@ static void bgc_dos_shutdown_vram(void) {
     if (g_djgpp_nearptr_ready) {
         __djgpp_nearptr_disable();
         g_djgpp_nearptr_ready = 0;
+        g_djgpp_vram = NULL;
     }
 }
 
 static void bgc_dos_flush_vga(void) {
-    if (g_djgpp_nearptr_ready) {
-        unsigned char *vram = (unsigned char *)(0xA0000 + __djgpp_conventional_base);
-        memcpy(vram, g_vga_buf, (size_t)SCR_PIXELS);
+    if (g_djgpp_nearptr_ready && g_djgpp_vram) {
+        memcpy(g_djgpp_vram, g_vga_buf, (size_t)SCR_PIXELS);
     } else {
         dosmemput(g_vga_buf, (size_t)SCR_PIXELS, 0xA0000L);
     }
@@ -382,6 +385,21 @@ static const unsigned char *get_font_rows(char ch) {
 }
 
 #if !BGC_DOS_TARGET
+static unsigned int vga_to_bgr_u32(unsigned char idx) {
+    switch (idx) {
+        case C_VGA_BLACK:  return 0x000C0C0Cu;
+        case C_VGA_GRASS:  return 0x00228B22u;
+        case C_VGA_LEAF:   return 0x0040C648u;
+        case C_VGA_TRUNK:  return 0x00204473u;
+        case C_VGA_SKY:    return 0x00F5CD7Du;
+        case C_VGA_YELLOW: return 0x0000D7FFu;
+        case C_VGA_WING:   return 0x00FFFAF5u;
+        case C_VGA_RED:    return 0x002323D2u;
+        case C_VGA_PANEL:  return 0x00EEE8E0u;
+        default:           return 0x00F5CD7Du;
+    }
+}
+
 static COLORREF vga_to_gdi_color(unsigned char idx) {
     switch (idx) {
         case C_VGA_BLACK:  return RGB(12, 12, 12);
@@ -402,6 +420,7 @@ static void init_gdi_double_buffer(BGC_Game *g, HWND hwnd) {
     g->mem_dc = NULL;
     g->mem_bmp = NULL;
     g->old_bmp = NULL;
+    g->dib_pixels = NULL;
 #if (BGC_WIN_ARCH != 16)
     g->gdi_font = NULL;
 #endif
@@ -409,18 +428,34 @@ static void init_gdi_double_buffer(BGC_Game *g, HWND hwnd) {
     if (screen_dc) {
         g->mem_dc = CreateCompatibleDC(screen_dc);
         if (g->mem_dc) {
-            g->mem_bmp = CreateCompatibleBitmap(screen_dc, SCR_W, SCR_H);
+#if (BGC_WIN_ARCH != 16)
+            BITMAPINFO bmi;
+            memset(&bmi, 0, sizeof(bmi));
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = SCR_W;
+            bmi.bmiHeader.biHeight = -SCR_H;
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+            g->mem_bmp = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, (void **)&g->dib_pixels, NULL, 0);
+            if (!g->mem_bmp) {
+                g->mem_bmp = CreateCompatibleBitmap(screen_dc, SCR_W, SCR_H);
+            }
             if (g->mem_bmp) {
                 g->old_bmp = (HBITMAP)SelectObject(g->mem_dc, g->mem_bmp);
             }
-#if (BGC_WIN_ARCH != 16)
             g->gdi_font = CreateFontA(
                 8, 5, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Terminal"
+                NONANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Terminal"
             );
             if (!g->gdi_font) {
                 g->gdi_font = (HFONT)GetStockObject(SYSTEM_FONT);
+            }
+#else
+            g->mem_bmp = CreateCompatibleBitmap(screen_dc, SCR_W, SCR_H);
+            if (g->mem_bmp) {
+                g->old_bmp = (HBITMAP)SelectObject(g->mem_dc, g->mem_bmp);
             }
 #endif
         }
@@ -447,6 +482,23 @@ static void cleanup_gdi_double_buffer(BGC_Game *g) {
         DeleteDC(g->mem_dc);
         g->mem_dc = NULL;
     }
+    g->dib_pixels = NULL;
+}
+
+static void present_vga_buffer_to_mem_dc(BGC_Game *g) {
+#if (BGC_WIN_ARCH != 16)
+    if (g->dib_pixels) {
+        unsigned long i;
+        unsigned int lut[16];
+        int c;
+        for (c = 0; c < 16; c++) lut[c] = vga_to_bgr_u32((unsigned char)c);
+        for (i = 0; i < SCR_PIXELS; i++) {
+            g->dib_pixels[i] = lut[g_vga_buf[i] & 0x0Fu];
+        }
+    }
+#else
+    (void)g;
+#endif
 }
 #endif
 
@@ -468,73 +520,27 @@ static void vga_color_to_rgb(unsigned char idx, unsigned char *r, unsigned char 
 static void raw_put_pixel(int x, int y, unsigned char vga_idx) {
     if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
     g_vga_buf[(unsigned long)y * SCR_W + (unsigned long)x] = vga_idx;
-#if BGC_DOS_TARGET && !BGC_DJGPP_TARGET
-    {
-        unsigned char far *vram = (unsigned char far *)0xA0000000L;
-        vram[(unsigned long)y * SCR_W + (unsigned long)x] = vga_idx;
-    }
-#endif
 }
 
 static void draw_px(const BGC_Game *g, void *hdc_ptr, int x, int y, unsigned char vga_idx) {
+    (void)g;
+    (void)hdc_ptr;
     if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
     g_vga_buf[(unsigned long)y * SCR_W + (unsigned long)x] = vga_idx;
-    if (g->backend == BACKEND_VGA || !g->gdi_available) {
-        raw_put_pixel(x, y, vga_idx);
-    }
-#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
-    if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
-        SetPixel((HDC)hdc_ptr, x, y, vga_to_gdi_color(vga_idx));
-    }
-#else
-    (void)hdc_ptr;
-#endif
 }
 
 static void draw_box(const BGC_Game *g, void *hdc_ptr, int x, int y, int w, int h, unsigned char fill_idx, int border) {
     int ix, iy;
+    (void)g;
+    (void)hdc_ptr;
     for (iy = y; iy < y + h; iy++) {
+        if (iy < 0 || iy >= SCR_H) continue;
         for (ix = x; ix < x + w; ix++) {
-            if (ix >= 0 && ix < SCR_W && iy >= 0 && iy < SCR_H) {
-                unsigned long idx = (unsigned long)iy * SCR_W + (unsigned long)ix;
-                if (border && (ix == x || ix == x + w - 1 || iy == y || iy == y + h - 1)) {
-                    g_vga_buf[idx] = C_VGA_BLACK;
-                } else {
-                    g_vga_buf[idx] = fill_idx;
-                }
-            }
-        }
-    }
-
-#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
-    if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
-        RECT rc;
-        HBRUSH br = CreateSolidBrush(vga_to_gdi_color(fill_idx));
-        rc.left = x;
-        rc.top = y;
-        rc.right = x + w;
-        rc.bottom = y + h;
-        FillRect((HDC)hdc_ptr, &rc, br);
-        DeleteObject(br);
-
-        if (border) {
-            HPEN pen = CreatePen(PS_SOLID, 1, vga_to_gdi_color(C_VGA_BLACK));
-            HGDIOBJ old_pen = SelectObject((HDC)hdc_ptr, pen);
-            HGDIOBJ old_br = SelectObject((HDC)hdc_ptr, GetStockObject(NULL_BRUSH));
-            Rectangle((HDC)hdc_ptr, x, y, x + w, y + h);
-            SelectObject((HDC)hdc_ptr, old_br);
-            SelectObject((HDC)hdc_ptr, old_pen);
-            DeleteObject(pen);
-        }
-        return;
-    }
-#endif
-    for (iy = y; iy < y + h; iy++) {
-        for (ix = x; ix < x + w; ix++) {
+            if (ix < 0 || ix >= SCR_W) continue;
             if (border && (ix == x || ix == x + w - 1 || iy == y || iy == y + h - 1)) {
-                draw_px(g, hdc_ptr, ix, iy, C_VGA_BLACK);
+                g_vga_buf[(unsigned long)iy * SCR_W + (unsigned long)ix] = C_VGA_BLACK;
             } else {
-                draw_px(g, hdc_ptr, ix, iy, fill_idx);
+                g_vga_buf[(unsigned long)iy * SCR_W + (unsigned long)ix] = fill_idx;
             }
         }
     }
@@ -542,30 +548,19 @@ static void draw_box(const BGC_Game *g, void *hdc_ptr, int x, int y, int w, int 
 
 static void draw_circle_fill(const BGC_Game *g, void *hdc_ptr, int cx, int cy, int r, unsigned char fill_idx, int outline_black) {
     int dx, dy;
-#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
-    if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
-        HBRUSH br = CreateSolidBrush(vga_to_gdi_color(fill_idx));
-        HGDIOBJ old_br = SelectObject((HDC)hdc_ptr, br);
-        HPEN pen = CreatePen(PS_SOLID, 1, vga_to_gdi_color(outline_black ? C_VGA_BLACK : fill_idx));
-        HGDIOBJ old_pen = SelectObject((HDC)hdc_ptr, pen);
-        Ellipse((HDC)hdc_ptr, cx - r, cy - r, cx + r + 1, cy + r + 1);
-        SelectObject((HDC)hdc_ptr, old_pen);
-        SelectObject((HDC)hdc_ptr, old_br);
-        DeleteObject(pen);
-        DeleteObject(br);
-    }
-#endif
+    (void)g;
+    (void)hdc_ptr;
     for (dy = -r; dy <= r; dy++) {
+        int py = cy + dy;
+        if (py < 0 || py >= SCR_H) continue;
         for (dx = -r; dx <= r; dx++) {
-            int d2 = dx * dx + dy * dy;
+            int px = cx + dx;
+            int d2;
+            if (px < 0 || px >= SCR_W) continue;
+            d2 = dx * dx + dy * dy;
             if (d2 <= r * r) {
                 unsigned char c = (outline_black && d2 >= (r - 1) * (r - 1)) ? C_VGA_BLACK : fill_idx;
-                if (cx + dx >= 0 && cx + dx < SCR_W && cy + dy >= 0 && cy + dy < SCR_H) {
-                    g_vga_buf[(unsigned long)(cy + dy) * SCR_W + (unsigned long)(cx + dx)] = c;
-                }
-                if (g->backend == BACKEND_VGA || !g->gdi_available || !hdc_ptr) {
-                    raw_put_pixel(cx + dx, cy + dy, c);
-                }
+                g_vga_buf[(unsigned long)py * SCR_W + (unsigned long)px] = c;
             }
         }
     }
@@ -577,23 +572,12 @@ static void draw_line_simple(const BGC_Game *g, void *hdc_ptr, int x0, int y0, i
     int sx = (x0 < x1) ? 1 : -1;
     int sy = (y0 < y1) ? 1 : -1;
     int err = dx - dy;
+    (void)g;
+    (void)hdc_ptr;
 
-#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
-    if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
-        HPEN pen = CreatePen(PS_SOLID, 1, vga_to_gdi_color(col_idx));
-        HGDIOBJ old_pen = SelectObject((HDC)hdc_ptr, pen);
-        MoveToEx((HDC)hdc_ptr, x0, y0, NULL);
-        LineTo((HDC)hdc_ptr, x1, y1);
-        SelectObject((HDC)hdc_ptr, old_pen);
-        DeleteObject(pen);
-    }
-#endif
     while (1) {
         if (x0 >= 0 && x0 < SCR_W && y0 >= 0 && y0 < SCR_H) {
             g_vga_buf[(unsigned long)y0 * SCR_W + (unsigned long)x0] = col_idx;
-        }
-        if (g->backend == BACKEND_VGA || !g->gdi_available || !hdc_ptr) {
-            raw_put_pixel(x0, y0, col_idx);
         }
         if (x0 == x1 && y0 == y1) break;
         {
@@ -605,62 +589,26 @@ static void draw_line_simple(const BGC_Game *g, void *hdc_ptr, int x0, int y0, i
 }
 
 static void draw_str_5x7(const BGC_Game *g, void *hdc_ptr, int x, int y, const char *s, unsigned char col_idx) {
-#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
-    if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
-        HDC dc = (HDC)hdc_ptr;
-        HFONT old_f = NULL;
-        int old_bk = SetBkMode(dc, TRANSPARENT);
-        COLORREF old_col = SetTextColor(dc, vga_to_gdi_color(col_idx));
-        if (g->gdi_font) {
-            old_f = (HFONT)SelectObject(dc, g->gdi_font);
-        }
-        TextOutA(dc, x, y, s, (int)strlen(s));
-        if (old_f) SelectObject(dc, old_f);
-        SetTextColor(dc, old_col);
-        SetBkMode(dc, old_bk);
-        return;
-    }
-#endif
-    {
-        int cx = x;
-        while (*s) {
-            const unsigned char *rows = get_font_rows(*s++);
-            int r, c;
-            for (r = 0; r < 7; r++) {
-                for (c = 0; c < 5; c++) {
-                    if (rows[r] & (1 << (4 - c))) {
-                        draw_px(g, hdc_ptr, cx + c, y + r, col_idx);
-                    }
+    int cx = x;
+    while (*s) {
+        const unsigned char *rows = get_font_rows(*s++);
+        int r, c;
+        for (r = 0; r < 7; r++) {
+            for (c = 0; c < 5; c++) {
+                if (rows[r] & (1 << (4 - c))) {
+                    draw_px(g, hdc_ptr, cx + c, y + r, col_idx);
                 }
             }
-            cx += 6;
         }
+        cx += 6;
     }
 }
 
 static void blit_frame_to_screen(const BGC_Game *g, void *hdc_ptr, const unsigned char *frame) {
-    int x, y;
-    if (!frame) return;
-    for (y = 0; y < SCR_H; y++) {
-        for (x = 0; x < SCR_W; x++) {
-            unsigned char idx = frame[(unsigned long)y * SCR_W + (unsigned long)x];
-            g_vga_buf[(unsigned long)y * SCR_W + (unsigned long)x] = idx;
-            if (g->backend == BACKEND_VGA || !g->gdi_available) {
-                raw_put_pixel(x, y, idx);
-            }
-        }
-    }
-#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
-    if (g->backend == BACKEND_GDI && g->gdi_available && hdc_ptr) {
-        for (y = 0; y < SCR_H; y++) {
-            for (x = 0; x < SCR_W; x++) {
-                SetPixel((HDC)hdc_ptr, x, y, vga_to_gdi_color(frame[(unsigned long)y * SCR_W + (unsigned long)x]));
-            }
-        }
-    }
-#else
+    (void)g;
     (void)hdc_ptr;
-#endif
+    if (!frame) return;
+    memcpy(g_vga_buf, frame, (size_t)SCR_PIXELS);
 }
 
 /* ============================================================================
@@ -978,6 +926,7 @@ static void load_replay_from_file(BGC_Game *g) {
 
 static void capture_video_frame(BGC_Game *g) {
     if (!g->video_recording) return;
+    if ((g->tick % 4l) != 0) return;
     if (g->video_frame_count < MAX_VIDEO_FRAMES && g->video_frames[g->video_frame_count]) {
         memcpy(g->video_frames[g->video_frame_count], g_vga_buf, (size_t)SCR_PIXELS);
         g->video_frame_count++;
@@ -1130,7 +1079,7 @@ static void compare_score_over_wifi_ip(BGC_Game *g) {
     struct sockaddr_in peer;
     char send_buf[64];
     char recv_buf[64];
-    DWORD timeout_ms = 600;
+    DWORD timeout_ms = 200;
     int remote_best = 0;
 
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -1379,7 +1328,7 @@ static void draw_tree_box(const BGC_Game *g, void *hdc_ptr, int tx, int ground_y
 
 static void draw_viewport_env(const BGC_Game *g, void *hdc_ptr, int vx, int vy, int vw, int vh) {
     int ground_y = vy + vh - 20;
-    int offset = (int)((g->tick * 2l) % 64l);
+    int offset = (int)((g->tick * 6l) % 64l);
     int tx;
 
     draw_box(g, hdc_ptr, vx, vy, vw, vh - 20, C_VGA_SKY, 0);
@@ -1445,8 +1394,8 @@ static void spawn_single_gold(BGC_Game *g) {
 static void spawn_single_bug(BGC_Game *g) {
     g->bug_x = SCR_W - 12;
     g->bug_y = 24 + (rand() % (SCR_H - 54));
-    g->bug_speed = 2 + (g->score / 50);
-    if (g->bug_speed > 8) g->bug_speed = 8;
+    g->bug_speed = 6 + (g->score / 30);
+    if (g->bug_speed > 14) g->bug_speed = 14;
 }
 
 static void start_single_game(BGC_Game *g) {
@@ -1475,7 +1424,7 @@ static void init_racer(Racer *r, int pane_w, int pane_h, int seed_offset) {
     r->gold_y = 20 + ((rand() + seed_offset) % ((pane_h > 45) ? (pane_h - 42) : 20));
     r->bug_x = pane_w - 12;
     r->bug_y = 24 + ((rand() + seed_offset * 3) % ((pane_h > 45) ? (pane_h - 42) : 20));
-    r->bug_speed = 3;
+    r->bug_speed = 7;
 }
 
 static void start_beerace(BGC_Game *g) {
@@ -1492,7 +1441,7 @@ static void start_beerace(BGC_Game *g) {
 }
 
 static int move_step_val(const BGC_Game *g) {
-    return (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 8 : 5;
+    return (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 14 : 10;
 }
 
 static void move_single_bee(BGC_Game *g, int dx, int dy) {
@@ -1520,9 +1469,11 @@ static void move_racer(const BGC_Game *g, Racer *r, int dx, int dy, int pane_w, 
 static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h) {
     if (r->dead) return;
 
-    r->gold_x -= 2;
+    r->gold_x -= 6;
     r->bug_x -= r->bug_speed;
-    r->health -= 1;
+    if ((g->tick % 4l) == 0) {
+        r->health -= 1;
+    }
 
     if (r->health <= 0) {
         r->health = 0;
@@ -1539,11 +1490,11 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h) {
     if (r->bug_x < 8) {
         r->bug_x = pane_w - 10;
         r->bug_y = 20 + (rand() % ((pane_h > 45) ? (pane_h - 42) : 20));
-        r->bug_speed = 3 + (r->score / 50);
-        if (r->bug_speed > 9) r->bug_speed = 9;
+        r->bug_speed = 7 + (r->score / 30);
+        if (r->bug_speed > 14) r->bug_speed = 14;
     }
 
-    if (abs(r->x - r->gold_x) < 11 && abs(r->y - r->gold_y) < 11) {
+    if (abs(r->x - r->gold_x) < 13 && abs(r->y - r->gold_y) < 13) {
         r->score += 10;
         r->health += 15;
         trigger_rumble_and_led(g, 14000, 14000, 2, 255, 215, 0);
@@ -1551,7 +1502,7 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h) {
         r->gold_y = 20 + (rand() % ((pane_h > 45) ? (pane_h - 42) : 20));
     }
 
-    if (abs(r->x - r->bug_x) < 11 && abs(r->y - r->bug_y) < 11) {
+    if (abs(r->x - r->bug_x) < 13 && abs(r->y - r->bug_y) < 13) {
         r->health -= 35;
         trigger_rumble_and_led(g, 48000, 48000, 5, 240, 25, 25);
         r->bug_x = pane_w - 10;
@@ -1568,7 +1519,7 @@ static void step_beerace(BGC_Game *g) {
     if (g->race_over) return;
 
     g->regen_timer_ticks++;
-    if (g->regen_timer_ticks >= 250l) {
+    if (g->regen_timer_ticks >= 400l) {
         g->regen_timer_ticks = 0;
         if (!g->p1.dead) g->p1.health += 2;
         if (!g->p2.dead) g->p2.health += 2;
@@ -1595,9 +1546,11 @@ static void step_beerace(BGC_Game *g) {
 static void step_single_game(BGC_Game *g) {
     if (g->game_over) return;
 
-    g->gold_x -= 2;
+    g->gold_x -= 6;
     g->bug_x -= g->bug_speed;
-    g->health -= 1;
+    if ((g->tick % 4l) == 0) {
+        g->health -= 1;
+    }
 
     if (g->health <= 0) {
         g->health = 0;
@@ -1612,7 +1565,7 @@ static void step_single_game(BGC_Game *g) {
     if (g->gold_x < 8) spawn_single_gold(g);
     if (g->bug_x < 8) spawn_single_bug(g);
 
-    if (abs(g->bee_x - g->gold_x) < 12 && abs(g->bee_y - g->gold_y) < 12) {
+    if (abs(g->bee_x - g->gold_x) < 14 && abs(g->bee_y - g->gold_y) < 14) {
         g->score += 10;
         g->health += 15;
         if (g->health > 100) g->health = 100;
@@ -1620,7 +1573,7 @@ static void step_single_game(BGC_Game *g) {
         spawn_single_gold(g);
     }
 
-    if (abs(g->bee_x - g->bug_x) < 12 && abs(g->bee_y - g->bug_y) < 12) {
+    if (abs(g->bee_x - g->bug_x) < 14 && abs(g->bee_y - g->bug_y) < 14) {
         g->health -= 35;
         trigger_rumble_and_led(g, 48000, 48000, 5, 240, 25, 25);
         spawn_single_bug(g);
@@ -2045,12 +1998,12 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
     poll_single_pad(&g->pad2, 1);
 
     if (g->screen == SCREEN_MAIN_MENU) {
-        if (g->pad1.dy < 0 && ((g->tick % 4l) == 0)) g->menu_idx = (g->menu_idx + 6) % 7;
-        if (g->pad1.dy > 0 && ((g->tick % 4l) == 0)) g->menu_idx = (g->menu_idx + 1) % 7;
+        if (g->pad1.dy < 0 && ((g->tick % 3l) == 0)) g->menu_idx = (g->menu_idx + 6) % 7;
+        if (g->pad1.dy > 0 && ((g->tick % 3l) == 0)) g->menu_idx = (g->menu_idx + 1) % 7;
         if (g->pad1.btn_confirm) activate_main_item(g, running);
     } else if (g->screen == SCREEN_MEDIA_VAULT) {
-        if (g->pad1.dx < 0 && ((g->tick % 4l) == 0)) switch_media_tab(g, -1);
-        if (g->pad1.dx > 0 && ((g->tick % 4l) == 0)) switch_media_tab(g,  1);
+        if (g->pad1.dx < 0 && ((g->tick % 3l) == 0)) switch_media_tab(g, -1);
+        if (g->pad1.dx > 0 && ((g->tick % 3l) == 0)) switch_media_tab(g,  1);
         if (g->pad1.btn_confirm) toggle_current_media_play(g);
         if (g->pad1.btn_retry) save_current_media_to_device(g);
         if (g->pad1.btn_back) g->screen = SCREEN_MAIN_MENU;
@@ -2072,14 +2025,14 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
         }
         if (g->race_over && (g->pad1.btn_retry || g->pad2.btn_retry)) start_beerace(g);
     } else if (g->screen == SCREEN_PAUSED) {
-        if (g->pad1.dy < 0 && ((g->tick % 4l) == 0)) g->pause_idx = (g->pause_idx + 2) % 3;
-        if (g->pad1.dy > 0 && ((g->tick % 4l) == 0)) g->pause_idx = (g->pause_idx + 1) % 3;
+        if (g->pad1.dy < 0 && ((g->tick % 3l) == 0)) g->pause_idx = (g->pause_idx + 2) % 3;
+        if (g->pad1.dy > 0 && ((g->tick % 3l) == 0)) g->pause_idx = (g->pause_idx + 1) % 3;
         if (g->pad1.btn_confirm) activate_pause_item(g);
         if (g->pad1.btn_pause || g->pad1.btn_back) g->screen = g->prev_screen;
     } else if (g->screen == SCREEN_SETTINGS) {
-        if (g->pad1.dy < 0 && ((g->tick % 4l) == 0)) g->settings_idx = (g->settings_idx + 4) % 5;
-        if (g->pad1.dy > 0 && ((g->tick % 4l) == 0)) g->settings_idx = (g->settings_idx + 1) % 5;
-        if (g->pad1.btn_confirm || (g->pad1.dx != 0 && ((g->tick % 4l) == 0))) toggle_setting_item(g);
+        if (g->pad1.dy < 0 && ((g->tick % 3l) == 0)) g->settings_idx = (g->settings_idx + 4) % 5;
+        if (g->pad1.dy > 0 && ((g->tick % 3l) == 0)) g->settings_idx = (g->settings_idx + 1) % 5;
+        if (g->pad1.btn_confirm || (g->pad1.dx != 0 && ((g->tick % 3l) == 0))) toggle_setting_item(g);
         if (g->pad1.btn_back) g->screen = g->prev_screen;
     } else if (g->screen == SCREEN_CONTROLS) {
         if (g->pad1.btn_confirm || g->pad1.btn_back || g->pad1.btn_pause) g->screen = g->prev_screen;
@@ -2128,7 +2081,7 @@ int main(int argc, char **argv) {
     game.gdi_available = 0;
     game.backend = BACKEND_VGA;
     game.pause_style = PAUSE_STYLE_FULL;
-    game.ctrl_speed_mode = CTRL_SPEED_NORMAL;
+    game.ctrl_speed_mode = CTRL_SPEED_FAST;
     game.screen = SCREEN_MAIN_MENU;
     read_obfuscated_vault(&game);
     spawn_single_gold(&game);
@@ -2140,7 +2093,7 @@ int main(int argc, char **argv) {
     dos_set_video(0x13);
 
     while (running) {
-        if (kbhit()) {
+        while (kbhit()) {
             int ch = getch();
             if (ch == 0 || ch == 224) {
                 int ext = getch();
@@ -2184,6 +2137,10 @@ int main(int argc, char **argv) {
                     if (ch == 13) activate_main_item(&game, &running);
                     else if (ch == 27) running = 0;
                 } else if (game.screen == SCREEN_PLAYING) {
+                    if (ch == 'a' || ch == 'A') move_single_bee(&game, -1, 0);
+                    if (ch == 'd' || ch == 'D') move_single_bee(&game,  1, 0);
+                    if (ch == 'w' || ch == 'W') move_single_bee(&game, 0, -1);
+                    if (ch == 's' || ch == 'S') move_single_bee(&game, 0,  1);
                     if (ch == 'p' || ch == 'P' || ch == 27) {
                         game.prev_screen = SCREEN_PLAYING;
                         game.pause_idx = 0;
@@ -2222,7 +2179,7 @@ int main(int argc, char **argv) {
 #if BGC_DJGPP_TARGET
         bgc_dos_flush_vga();
 #endif
-        delay(40);
+        delay(5);
     }
 
     if (game.video_recording) save_video_to_file(&game);
@@ -2254,26 +2211,46 @@ static void detect_backend(BGC_Game *g, const char *cmd) {
 static void blit_vga_buffer_to_gdi(HDC hdc, const RECT *rc) {
     int cw = rc->right - rc->left;
     int ch = rc->bottom - rc->top;
-    int x, y;
     if (cw <= 0 || ch <= 0) return;
 
-    for (y = 0; y < SCR_H; y++) {
-        int y0 = (y * ch) / SCR_H;
-        int y1 = ((y + 1) * ch) / SCR_H;
-        for (x = 0; x < SCR_W; x++) {
-            int x0 = (x * cw) / SCR_W;
-            int x1 = ((x + 1) * cw) / SCR_W;
-            unsigned char idx = g_vga_buf[(unsigned long)y * SCR_W + (unsigned long)x];
-            HBRUSH br = CreateSolidBrush(vga_to_gdi_color(idx));
-            RECT cell;
-            cell.left = x0;
-            cell.top = y0;
-            cell.right = (x1 > x0) ? x1 : (x0 + 1);
-            cell.bottom = (y1 > y0) ? y1 : (y0 + 1);
-            FillRect(hdc, &cell, br);
-            DeleteObject(br);
+#if (BGC_WIN_ARCH != 16)
+    {
+        BITMAPINFO bmi;
+        unsigned int pixels[SCR_W * SCR_H];
+        unsigned int lut[16];
+        unsigned long i;
+        int c;
+        for (c = 0; c < 16; c++) lut[c] = vga_to_bgr_u32((unsigned char)c);
+        for (i = 0; i < SCR_PIXELS; i++) pixels[i] = lut[g_vga_buf[i] & 0x0Fu];
+
+        memset(&bmi, 0, sizeof(bmi));
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = SCR_W;
+        bmi.bmiHeader.biHeight = -SCR_H;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        StretchDIBits(hdc, 0, 0, cw, ch, 0, 0, SCR_W, SCR_H, pixels, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    }
+#else
+    {
+        int x, y;
+        for (y = 0; y < SCR_H; y++) {
+            int y0 = (y * ch) / SCR_H;
+            int y1 = ((y + 1) * ch) / SCR_H;
+            for (x = 0; x < SCR_W; x++) {
+                int x0 = (x * cw) / SCR_W;
+                int x1 = ((x + 1) * cw) / SCR_W;
+                unsigned char idx = g_vga_buf[(unsigned long)y * SCR_W + (unsigned long)x] & 0x0Fu;
+                HBRUSH br = CreateSolidBrush(vga_to_gdi_color(idx));
+                RECT cell;
+                cell.left = x0; cell.top = y0; cell.right = x1; cell.bottom = y1;
+                FillRect(hdc, &cell, br);
+                DeleteObject(br);
+            }
         }
     }
+#endif
 }
 
 #if (BGC_WIN_ARCH == 16) && defined(__WATCOMC__)
@@ -2293,7 +2270,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             init_gdi_double_buffer(&g_win, hwnd);
             spawn_single_gold(&g_win);
             spawn_single_bug(&g_win);
-            SetTimer(hwnd, 1, 40, NULL);
+            SetTimer(hwnd, 1, 15, NULL);
             return 0;
 
         case WM_TIMER:
@@ -2303,12 +2280,13 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 return 0;
             }
             step_world(&g_win);
-            if (g_win.backend == BACKEND_GDI && g_win.gdi_available && g_win.mem_dc) {
-                render_scene(&g_win, (void *)g_win.mem_dc);
-            } else {
-                memset(g_vga_buf, C_VGA_SKY, sizeof(g_vga_buf));
-                render_scene(&g_win, NULL);
+            memset(g_vga_buf, C_VGA_SKY, sizeof(g_vga_buf));
+            render_scene(&g_win, NULL);
+#if (BGC_WIN_ARCH != 16)
+            if (g_win.backend == BACKEND_GDI && g_win.gdi_available && g_win.mem_dc && g_win.dib_pixels) {
+                present_vga_buffer_to_mem_dc(&g_win);
             }
+#endif
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
 
@@ -2389,7 +2367,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             hdc = BeginPaint(hwnd, &ps);
             GetClientRect(hwnd, &rc);
 #if (BGC_WIN_ARCH != 16)
-            if (g_win.backend == BACKEND_GDI && g_win.gdi_available && g_win.mem_dc) {
+            if (g_win.backend == BACKEND_GDI && g_win.gdi_available && g_win.mem_dc && g_win.dib_pixels) {
                 int cw = rc.right - rc.left;
                 int ch = rc.bottom - rc.top;
                 if (cw > 0 && ch > 0) {
@@ -2398,8 +2376,6 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             } else
 #endif
             {
-                memset(g_vga_buf, C_VGA_SKY, sizeof(g_vga_buf));
-                render_scene(&g_win, NULL);
                 blit_vga_buffer_to_gdi(hdc, &rc);
             }
             EndPaint(hwnd, &ps);
@@ -2433,7 +2409,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     strcpy(g_win.peer_ip, "192.168.1.16");
     g_win.screen = SCREEN_MAIN_MENU;
     g_win.pause_style = PAUSE_STYLE_FULL;
-    g_win.ctrl_speed_mode = CTRL_SPEED_NORMAL;
+    g_win.ctrl_speed_mode = CTRL_SPEED_FAST;
     read_obfuscated_vault(&g_win);
     detect_backend(&g_win, lpCmd);
 
