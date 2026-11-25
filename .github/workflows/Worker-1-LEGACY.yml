@@ -21,36 +21,21 @@ jobs:
       - name: Prepare dist directory
         run: if not exist dist mkdir dist
 
-      - name: Install Open Watcom v2 (x64)
+      - name: Install Open Watcom v2 Full Archive (DOS, Win16 & Win32)
         id: ow_setup
         continue-on-error: true
         run: |
-          if not exist "%TEMP%\ow_installer" mkdir "%TEMP%\ow_installer"
-          curl.exe -fSL --retry 3 "https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/open-watcom-2_0-c-win-x64.exe" -o "%TEMP%\ow_installer\open-watcom-2_0-c-win-x64.exe"
-          "%TEMP%\ow_installer\open-watcom-2_0-c-win-x64.exe" /S
-          set "WATCOM="
-          for %%D in ("C:\WATCOM" "C:\OW" "C:\openwatcom" "C:\Program Files\OpenWatcom" "C:\Program Files (x86)\OpenWatcom") do (
-            if exist "%%~fD\BINNT64\wcl386.exe" set "WATCOM=%%~fD"
-            if not defined WATCOM if exist "%%~fD\BINNT\wcl.exe" set "WATCOM=%%~fD"
-          )
-          if not defined WATCOM (
-            for /d %%D in ("C:\*WATCOM*" "C:\*watcom*") do (
-              if exist "%%~fD\BINNT64" set "WATCOM=%%~fD"
-              if not defined WATCOM if exist "%%~fD\BINNT" set "WATCOM=%%~fD"
-            )
-          )
-          if defined WATCOM (
-            echo Detected WATCOM=%WATCOM%
-            echo WATCOM=%WATCOM%>> "%GITHUB_ENV%"
-            echo LIB=%WATCOM%\LIB386\DOS;%WATCOM%\LIB386;%WATCOM%\LIB386\NT;%WATCOM%\LIB286\WIN;%WATCOM%\LIB286>> "%GITHUB_ENV%"
-            echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
-            set "PATH=%WATCOM%\BINNT64;%WATCOM%\BINNT;%PATH%"
-            dir /b "%WATCOM%"
-            dir /s /b "%WATCOM%\*.lib" "%WATCOM%\BIN*\*.exe" 2>nul || echo No .lib or .exe files found under %WATCOM%
-          ) else (
-            echo Open Watcom binary directory not auto-detected
-            exit /b 1
-          )
+          if not exist "%TEMP%\ow_pkg" mkdir "%TEMP%\ow_pkg"
+          if not exist "C:\WATCOM" mkdir "C:\WATCOM"
+          curl.exe -fSL --retry 3 "https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/open-watcom-2_0-c-win-x64.7z" -o "%TEMP%\ow_pkg\ow.7z"
+          7z x "%TEMP%\ow_pkg\ow.7z" -o"C:\WATCOM" -y >nul
+          set "WATCOM=C:\WATCOM"
+          echo WATCOM=%WATCOM%>> "%GITHUB_ENV%"
+          echo LIB=%WATCOM%\LIB386\DOS;%WATCOM%\LIB386;%WATCOM%\LIB386\NT;%WATCOM%\LIB286\WIN;%WATCOM%\LIB286>> "%GITHUB_ENV%"
+          echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
+          dir /b "%WATCOM%"
+          if exist "%WATCOM%\lib386\dos\clib3r.lib" (echo [OK] clib3r.lib found) else (echo [WARN] clib3r.lib missing)
+          if exist "%WATCOM%\binnt\wcl.exe" (echo [OK] binnt\wcl.exe found) else (echo [WARN] binnt\wcl.exe missing)
 
       - name: 1. Build DOS / FreeDOS (bgc_freedos.exe)
         id: build_freedos
@@ -66,10 +51,7 @@ jobs:
             echo [FREEDOS] wcl386.exe not found under %WATCOM%
             exit /b 1
           )
-          if errorlevel 1 (
-            echo [FREEDOS] Build failed with code %errorlevel%
-            exit /b 1
-          )
+          if errorlevel 1 exit /b 1
           dir dist\bgc_freedos.exe
 
       - name: 2. Build Win16 (bgc_win16.exe)
@@ -86,10 +68,7 @@ jobs:
             echo [WIN16] wcl.exe not found under %WATCOM%
             exit /b 1
           )
-          if errorlevel 1 (
-            echo [WIN16] Build failed with code %errorlevel%
-            exit /b 1
-          )
+          if errorlevel 1 exit /b 1
           dir dist\bgc_win16.exe
 
       - name: 3. Build Windows 9x (95 / 98 / ME)
@@ -118,4 +97,42 @@ jobs:
             exit /b 1
           )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
-          cl /nologo /
+          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || (echo [NT2000] NT4 build failed & exit /b 1)
+          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || (echo [NT2000] 2000 build failed & exit /b 1)
+          dir dist\bgc_nt40.exe dist\bgc_win2000.exe
+
+      - name: 5. Build Windows XP 32-bit (XP32 - MSVC x86)
+        id: build_xp32
+        continue-on-error: true
+        run: |
+          set "VSDIR="
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo [XP32] VSDIR not found via vswhere
+            exit /b 1
+          )
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp32.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || (echo [XP32] XP32 build failed & exit /b 1)
+          dir dist\bgc_xp32.exe
+
+      - name: Upload retro & XP32 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgc-retro-nt-to-xp
+          path: dist/*
+          if-no-files-found: ignore
+
+      - name: Check overall retro build status
+        if: always()
+        run: |
+          set "FAILED="
+          if not "%build_freedos_outcome%"=="success" set "FAILED=%FAILED% build_freedos(%build_freedos_outcome%)"
+          if not "%build_win16_outcome%"=="success" set "FAILED=%FAILED% build_win16(%build_win16_outcome%)"
+          if not "%build_9x_outcome%"=="success" set "FAILED=%FAILED% build_9x(%build_9x_outcome%)"
+          if not "%build_nt_2000_outcome%"=="success" set "FAILED=%FAILED% build_nt_2000(%build_nt_2000_outcome%)"
+          if not "%build_xp32_outcome%"=="success" set "FAILED=%FAILED% build_xp32(%build_xp32_outcome%)"
+          if defined FAILED (
+            echo FAILED TARGETS:%FAILED%
+            exit /b 1
+          )
