@@ -23,7 +23,7 @@ jobs:
       - name: Install DJGPP toolchain (v3.4 linux64 gcc1220)
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl tar bzip2
+          sudo apt-get install -y curl tar bzip2 unzip
           mkdir -p /opt/djgpp
           curl -fSL --retry 3 "https://github.com/andrewwutw/build-djgpp/releases/download/v3.4/djgpp-linux64-gcc1220.tar.bz2" -o /tmp/djgpp-linux64-gcc1220.tar.bz2
           tar -xjf /tmp/djgpp-linux64-gcc1220.tar.bz2 -C /opt/djgpp
@@ -34,10 +34,12 @@ jobs:
           DJGPP_CC=$(find "${DJGPP_BIN}" -maxdepth 1 -type f -name '*-gcc' | head -n 1)
           echo "DJGPP_CC=${DJGPP_CC}" >> "$GITHUB_ENV"
 
-      - name: Build DOS / FreeDOS (bgc_freedos.exe)
+      - name: Build DOS / FreeDOS (bgc_freedos.exe) and bundle CWSDPMI.EXE
         run: |
           "${DJGPP_CC}" -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe
-          ls -lh dist/bgc_freedos.exe
+          curl -fSL --retry 3 "https://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip" -o /tmp/csdpmi7b.zip
+          unzip -jo /tmp/csdpmi7b.zip "bin/CWSDPMI.EXE" -d dist || unzip -jo /tmp/csdpmi7b.zip "*CWSDPMI.EXE" -d dist
+          ls -lh dist/bgc_freedos.exe dist/CWSDPMI.EXE
 
       - name: Upload DOS / FreeDOS artifact
         uses: actions/upload-artifact@v4
