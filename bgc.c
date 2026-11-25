@@ -1570,10 +1570,10 @@ static void launch_beerace_match(BGC_Game *g) {
 }
 
 static void apply_smooth_move_single(BGC_Game *g, int dx, int dy, int is_tap) {
-    int base_h = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 5 : 3;
-    int v_step = is_tap ? 2 : 1;
-    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -6 : -4;
-    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 5 : 3;
+    int base_h = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
+    int v_step = is_tap ? 4 : 3;
+    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -10 : -7;
+    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 9 : 7;
 
     if (g->screen != SCREEN_PLAYING || g->game_over) return;
 
@@ -1597,8 +1597,8 @@ static void update_smooth_bee_physics(BGC_Game *g) {
     g->bee_x += g->bee_vx;
     g->bee_y += g->bee_vy;
 
-    g->bee_vx = (g->bee_vx * 2) / 3;
-    g->bee_vy = (g->bee_vy * 2) / 3;
+    g->bee_vx = (g->bee_vx * 3) / 4;
+    g->bee_vy = (g->bee_vy * 3) / 4;
 
     if (g->bee_x < 10) { g->bee_x = 10; g->bee_vx = 0; }
     if (g->bee_x > SCR_W - 12) { g->bee_x = SCR_W - 12; g->bee_vx = 0; }
@@ -1607,10 +1607,10 @@ static void update_smooth_bee_physics(BGC_Game *g) {
 }
 
 static void apply_smooth_move_racer(const BGC_Game *g, Racer *r, int dx, int dy, int is_tap) {
-    int base_h = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 3;
-    int v_step = is_tap ? 2 : 1;
-    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -5 : -4;
-    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 3;
+    int base_h = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 6 : 5;
+    int v_step = is_tap ? 4 : 3;
+    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -9 : -7;
+    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 8 : 7;
 
     if (r->dead) return;
 
@@ -1634,8 +1634,8 @@ static void update_smooth_racer_physics(Racer *r, int pane_w, int pane_h) {
     r->x += r->vx;
     r->y += r->vy;
 
-    r->vx = (r->vx * 2) / 3;
-    r->vy = (r->vy * 2) / 3;
+    r->vx = (r->vx * 3) / 4;
+    r->vy = (r->vy * 3) / 4;
 
     if (r->x < 8) { r->x = 8; r->vx = 0; }
     if (r->x > pane_w - 8) { r->x = pane_w - 8; r->vx = 0; }
