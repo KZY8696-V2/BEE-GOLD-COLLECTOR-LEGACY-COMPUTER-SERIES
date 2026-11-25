@@ -38,7 +38,10 @@
 #else
     #define BGC_DOS_TARGET 0
     #define BGC_DJGPP_TARGET 0
-    #if !defined(_WIN16) && !defined(__WINDOWS_386__) && !defined(_M_I86) && !defined(_WIN32_WCE) && (_WIN32_WINNT >= 0x0400 || !defined(_WIN32_WINNT))
+    #if !defined(_WIN16) && !defined(__WINDOWS_386__) && !defined(_M_I86) && !defined(_WIN32_WCE) && (!defined(_WIN32_WINNT) || _WIN32_WINNT >= 0x0400)
+        #ifndef WIN32_LEAN_AND_MEAN
+            #define WIN32_LEAN_AND_MEAN
+        #endif
         #include <winsock2.h>
         #include <ws2tcpip.h>
         #define BGC_HAS_SOCKETS 1
@@ -147,9 +150,6 @@ typedef struct {
 } BGC_XINPUT_VIBRATION;
 
 typedef DWORD (WINAPI *PFN_XInputSetState)(DWORD dwUserIndex, BGC_XINPUT_VIBRATION *pVibration);
-typedef HANDLE (WINAPI *PFN_CreateFileA)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
-typedef BOOL (WINAPI *PFN_WriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED);
-typedef BOOL (WINAPI *PFN_CloseHandle)(HANDLE);
 typedef BOOLEAN (WINAPI *PFN_HidD_SetOutputReport)(HANDLE HidDeviceObject, PVOID ReportBuffer, ULONG ReportBufferLength);
 #endif
 
@@ -451,6 +451,7 @@ static unsigned int vga_to_bgr_u32(unsigned char idx) {
     }
 }
 
+#if (BGC_WIN_ARCH == 16)
 static COLORREF vga_to_gdi_color(unsigned char idx) {
     switch (idx) {
         case C_VGA_BLACK:  return RGB(12, 12, 12);
@@ -465,6 +466,7 @@ static COLORREF vga_to_gdi_color(unsigned char idx) {
         default:           return RGB(125, 205, 245);
     }
 }
+#endif
 
 static void init_gdi_double_buffer(BGC_Game *g, HWND hwnd) {
     HDC screen_dc = GetDC(hwnd);
@@ -681,17 +683,12 @@ static void apply_rumble_and_dualsense(unsigned short left_val, unsigned short r
     }
 
     {
-        HMODULE h_k32 = GetModuleHandleA("kernel32.dll");
         HMODULE h_hid = LoadLibraryA("hid.dll");
-        if (h_k32 && h_hid) {
-            PFN_CreateFileA pCreateFileA = (PFN_CreateFileA)GetProcAddress(h_k32, "CreateFileA");
-            PFN_WriteFile pWriteFile = (PFN_WriteFile)GetProcAddress(h_k32, "WriteFile");
-            PFN_CloseHandle pCloseHandle = (PFN_CloseHandle)GetProcAddress(h_k32, "CloseHandle");
+        if (h_hid) {
             PFN_HidD_SetOutputReport pSetOut = (PFN_HidD_SetOutputReport)GetProcAddress(h_hid, "HidD_SetOutputReport");
-
-            if (pCreateFileA && pCloseHandle) {
+            if (pSetOut) {
                 unsigned char ds4_rep[32];
-                HANDLE h_ds4 = pCreateFileA(
+                HANDLE h_ds4 = CreateFileA(
                     "\\\\?\\HID#VID_054C&PID_05C4",
                     GENERIC_WRITE | GENERIC_READ,
                     FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -706,17 +703,13 @@ static void apply_rumble_and_dualsense(unsigned short left_val, unsigned short r
                     ds4_rep[6] = r;
                     ds4_rep[7] = gr;
                     ds4_rep[8] = b;
-                    if (pSetOut) pSetOut(h_ds4, ds4_rep, sizeof(ds4_rep));
-                    else if (pWriteFile) {
-                        DWORD written = 0;
-                        pWriteFile(h_ds4, ds4_rep, sizeof(ds4_rep), &written, NULL);
-                    }
-                    pCloseHandle(h_ds4);
+                    pSetOut(h_ds4, ds4_rep, sizeof(ds4_rep));
+                    CloseHandle(h_ds4);
                 }
 
                 {
                     unsigned char ds5_rep[48];
-                    HANDLE h_ds5 = pCreateFileA(
+                    HANDLE h_ds5 = CreateFileA(
                         "\\\\?\\HID#VID_054C&PID_0CE6",
                         GENERIC_WRITE | GENERIC_READ,
                         FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -732,12 +725,8 @@ static void apply_rumble_and_dualsense(unsigned short left_val, unsigned short r
                         ds5_rep[45] = r;
                         ds5_rep[46] = gr;
                         ds5_rep[47] = b;
-                        if (pSetOut) pSetOut(h_ds5, ds5_rep, sizeof(ds5_rep));
-                        else if (pWriteFile) {
-                            DWORD written = 0;
-                            pWriteFile(h_ds5, ds5_rep, sizeof(ds5_rep), &written, NULL);
-                        }
-                        pCloseHandle(h_ds5);
+                        pSetOut(h_ds5, ds5_rep, sizeof(ds5_rep));
+                        CloseHandle(h_ds5);
                     }
                 }
             }
@@ -1982,7 +1971,7 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offs
     int i;
     if (r->dead) return;
 
-    if (is_p2 && g->mouse.act_as_pad2) {
+    if (is_p2 && g->mouse.act_as_pad2 && !g->pad2.connected) {
         update_smooth_mouse_follow_racer(g, r, pane_w, pane_h, x_offset);
     }
     update_smooth_racer_physics(r, pane_w, pane_h);
@@ -2042,8 +2031,14 @@ static void step_beerace(BGC_Game *g) {
     g->regen_timer_ticks++;
     if (g->regen_timer_ticks >= 400l) {
         g->regen_timer_ticks = 0;
-        if (!g->p1.dead) g->p1.health += 2;
-        if (!g->p2.dead) g->p2.health += 2;
+        if (!g->p1.dead && g->p1.health < 100) {
+            g->p1.health += 2;
+            if (g->p1.health > 100) g->p1.health = 100;
+        }
+        if (!g->p2.dead && g->p2.health < 100) {
+            g->p2.health += 2;
+            if (g->p2.health > 100) g->p2.health = 100;
+        }
     }
 
     step_racer(g, &g->p1, half_w, SCR_H, 0, 0, 7);
@@ -2147,10 +2142,12 @@ static void step_world(BGC_Game *g) {
                 g->replay_playing = 0;
             }
         } else if (g->media_tab == MEDIA_TAB_VIDEO && g->video_playing && g->video_frame_count > 0) {
-            g->video_play_idx++;
-            if (g->video_play_idx >= g->video_frame_count) {
-                g->video_play_idx = 0;
-                g->video_playing = 0;
+            if ((g->tick % 2l) == 0) {
+                g->video_play_idx++;
+                if (g->video_play_idx >= g->video_frame_count) {
+                    g->video_play_idx = 0;
+                    g->video_playing = 0;
+                }
             }
         }
     }
@@ -2160,22 +2157,30 @@ static void step_world(BGC_Game *g) {
  * 9. UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN)
  * ============================================================================ */
 
-static void open_media_vault(BGC_Game *g) {
-    if (g->replay_count == 0) load_replay_from_file(g);
-    if (g->video_frame_count == 0) load_video_from_file(g);
+static void sync_media_tab_state(BGC_Game *g) {
     g->replay_play_idx = 0;
     g->video_play_idx = 0;
     g->replay_playing = (g->media_tab == MEDIA_TAB_REPLAY && g->replay_count > 0) ? 1 : 0;
     g->video_playing  = (g->media_tab == MEDIA_TAB_VIDEO && g->video_frame_count > 0) ? 1 : 0;
+}
+
+static void open_media_vault(BGC_Game *g) {
+    if (g->replay_count == 0) load_replay_from_file(g);
+    if (g->video_frame_count == 0) load_video_from_file(g);
+    sync_media_tab_state(g);
     g->screen = SCREEN_MEDIA_VAULT;
+}
+
+static void set_media_tab(BGC_Game *g, int new_tab) {
+    if (new_tab < MEDIA_TAB_PHOTO) new_tab = MEDIA_TAB_PHOTO;
+    if (new_tab > MEDIA_TAB_VIDEO) new_tab = MEDIA_TAB_VIDEO;
+    g->media_tab = new_tab;
+    sync_media_tab_state(g);
 }
 
 static void switch_media_tab(BGC_Game *g, int dir) {
     g->media_tab = (g->media_tab + (dir > 0 ? 1 : 2)) % 3;
-    g->replay_play_idx = 0;
-    g->video_play_idx = 0;
-    g->replay_playing = (g->media_tab == MEDIA_TAB_REPLAY && g->replay_count > 0) ? 1 : 0;
-    g->video_playing  = (g->media_tab == MEDIA_TAB_VIDEO && g->video_frame_count > 0) ? 1 : 0;
+    sync_media_tab_state(g);
 }
 
 static void save_current_media_to_device(BGC_Game *g) {
@@ -2193,9 +2198,9 @@ static void toggle_current_media_play(BGC_Game *g) {
     if (g->media_tab == MEDIA_TAB_PHOTO) {
         save_current_media_to_device(g);
     } else if (g->media_tab == MEDIA_TAB_REPLAY) {
-        g->replay_playing = !g->replay_playing;
+        if (g->replay_count > 0) g->replay_playing = !g->replay_playing;
     } else if (g->media_tab == MEDIA_TAB_VIDEO) {
-        g->video_playing = !g->video_playing;
+        if (g->video_frame_count > 0) g->video_playing = !g->video_playing;
     }
 }
 
@@ -2304,16 +2309,13 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
     if (g->screen == SCREEN_MEDIA_VAULT) {
         if (m->click_left) {
             if (point_in_box(m->x, m->y, 12, 6, 92, 10)) {
-                g->media_tab = MEDIA_TAB_PHOTO;
-                switch_media_tab(g, 0);
+                set_media_tab(g, MEDIA_TAB_PHOTO);
                 return;
             } else if (point_in_box(m->x, m->y, 114, 6, 92, 10)) {
-                g->media_tab = MEDIA_TAB_REPLAY;
-                switch_media_tab(g, 0);
+                set_media_tab(g, MEDIA_TAB_REPLAY);
                 return;
             } else if (point_in_box(m->x, m->y, 216, 6, 92, 10)) {
-                g->media_tab = MEDIA_TAB_VIDEO;
-                switch_media_tab(g, 0);
+                set_media_tab(g, MEDIA_TAB_VIDEO);
                 return;
             } else if (point_in_box(m->x, m->y, 12, 178, 296, 15)) {
                 toggle_current_media_play(g);
@@ -2389,7 +2391,7 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
             g->screen = SCREEN_PAUSED;
             return;
         }
-        if (!m->follow_mode && m->act_as_pad2 && mouse_allowed_in_mode(g) &&
+        if (!m->follow_mode && m->act_as_pad2 && !g->pad2.connected && mouse_allowed_in_mode(g) &&
             (m->left_down || m->x != m->prev_x || m->y != m->prev_y)) {
             int half_w = SCR_W / 2;
             int local_x = (m->x >= half_w) ? (m->x - half_w) : m->x;
@@ -2580,7 +2582,7 @@ static void render_media_vault(BGC_Game *g, void *hdc_ptr) {
         } else {
             draw_viewport_env(g, hdc_ptr, 0, 0, SCR_W, SCR_H);
         }
-        sprintf(status_line, "VIDEO %d/%d", g->video_play_idx + 1, g->video_frame_count);
+        sprintf(status_line, "VIDEO %d/%d", (g->video_frame_count > 0) ? (g->video_play_idx + 1) : 0, g->video_frame_count);
     }
 
     draw_box(g, hdc_ptr, 8, 4, 304, 14, C_VGA_PANEL, 1);
@@ -3469,12 +3471,12 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
 
         case WM_DESTROY:
+            KillTimer(hwnd, 1);
             write_obfuscated_options(&g_win);
             apply_rumble_and_dualsense(0, 0, 0, 0, 0);
             if (g_win.video_recording) save_video_to_file(&g_win);
             cleanup_gdi_double_buffer(&g_win);
             free_media_buffers(&g_win);
-            KillTimer(hwnd, 1);
             PostQuitMessage(0);
             return 0;
     }
