@@ -5,6 +5,8 @@
  * + DOUBLE-BUFFERED GDI (CreateCompatibleDC/Bitmap/BitBlt) + GDI FONT
  * + RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR
  * + UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN + SAVE TO DEVICE)
+ * + MULTI-GOLD, MULTI-BUG & GOLD BAR COLLECTIBLE
+ * + HOLD + TAP SMOOTH ASCENT & FULL MAIN MENU GAMEPAD SUPPORT
  * + SINGLE-FILE AUTO-ADAPTATION FOR DOS/FREEDOS (DJGPP & WATCOM), WIN16,
  *   WIN9X/2000/XP & WIN32/64
  * ============================================================================ */
@@ -78,6 +80,9 @@
 #define SCR_H 200
 #define SCR_PIXELS ((unsigned long)SCR_W * (unsigned long)SCR_H)
 
+#define MAX_GOLDS 4
+#define MAX_BUGS  4
+
 #define VAULT_FILE      "BGCSCV.DAT"
 #define REPLAY_FILE     "BGCRPL.RPL"
 #define VIDEO_FILE      "BGCVDO.VDO"
@@ -149,6 +154,7 @@ typedef struct {
     int prev_back;
     int prev_pause;
     int prev_retry;
+    int nav_cooldown;
 #if BGC_DOS_TARGET
     int calibrated;
     unsigned int center_x;
@@ -161,11 +167,16 @@ typedef struct {
 typedef struct {
     int x;
     int y;
-    int gold_x;
-    int gold_y;
-    int bug_x;
-    int bug_y;
-    int bug_speed;
+    int vx;
+    int vy;
+    int gold_x[MAX_GOLDS];
+    int gold_y[MAX_GOLDS];
+    int gold_bar_x;
+    int gold_bar_y;
+    int gold_bar_active;
+    int bug_x[MAX_BUGS];
+    int bug_y[MAX_BUGS];
+    int bug_speed[MAX_BUGS];
     int score;
     int health;
     int dead;
@@ -182,11 +193,16 @@ typedef struct {
 typedef struct {
     int bee_x;
     int bee_y;
-    int gold_x;
-    int gold_y;
-    int bug_x;
-    int bug_y;
-    int bug_speed;
+    int bee_vx;
+    int bee_vy;
+    int gold_x[MAX_GOLDS];
+    int gold_y[MAX_GOLDS];
+    int gold_bar_x;
+    int gold_bar_y;
+    int gold_bar_active;
+    int bug_x[MAX_BUGS];
+    int bug_y[MAX_BUGS];
+    int bug_speed[MAX_BUGS];
     int score;
     int best_score;
     int last_score;
@@ -515,11 +531,6 @@ static void vga_color_to_rgb(unsigned char idx, unsigned char *r, unsigned char 
         case C_VGA_PANEL:  *r = 224; *g = 232; *b = 238; break;
         default:           *r = 125; *g = 205; *b = 245; break;
     }
-}
-
-static void raw_put_pixel(int x, int y, unsigned char vga_idx) {
-    if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
-    g_vga_buf[(unsigned long)y * SCR_W + (unsigned long)x] = vga_idx;
 }
 
 static void draw_px(const BGC_Game *g, void *hdc_ptr, int x, int y, unsigned char vga_idx) {
@@ -1154,6 +1165,7 @@ static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
 
     pad->dx = 0;
     pad->dy = 0;
+    if (pad->nav_cooldown > 0) pad->nav_cooldown--;
 
 #if BGC_DJGPP_TARGET
     {
@@ -1266,6 +1278,7 @@ static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
 
     pad->dx = 0;
     pad->dy = 0;
+    if (pad->nav_cooldown > 0) pad->nav_cooldown--;
 
 #if (BGC_WIN_ARCH != 16)
     {
@@ -1275,7 +1288,7 @@ static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
         ji_ex.dwFlags = JOY_RETURNALL;
 
         if (joyGetPosEx(id, &ji_ex) == JOYERR_NOERROR) {
-            DWORD mid = 32768, dead = 9000;
+            DWORD mid = 32768, dead = 7500;
             found = 1;
             if (ji_ex.dwXpos < mid - dead) pad->dx = -1;
             else if (ji_ex.dwXpos > mid + dead) pad->dx = 1;
@@ -1288,10 +1301,10 @@ static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
                 if (ji_ex.dwPOV >= 13500 && ji_ex.dwPOV <= 22500) pad->dy = 1;
                 if (ji_ex.dwPOV >= 22500 && ji_ex.dwPOV <= 31500) pad->dx = -1;
             }
-            if (ji_ex.dwButtons & JOY_BUTTON1) rc = 1;
-            if (ji_ex.dwButtons & JOY_BUTTON2) rb = 1;
-            if (ji_ex.dwButtons & (JOY_BUTTON3 | JOY_BUTTON4 | JOY_BUTTON7 | JOY_BUTTON8)) rp = 1;
-            if (ji_ex.dwButtons & (JOY_BUTTON1 | JOY_BUTTON3)) rr = 1;
+            if (ji_ex.dwButtons & (JOY_BUTTON1 | JOY_BUTTON3)) rc = 1;
+            if (ji_ex.dwButtons & (JOY_BUTTON2 | JOY_BUTTON4)) rb = 1;
+            if (ji_ex.dwButtons & (JOY_BUTTON7 | JOY_BUTTON8 | JOY_BUTTON5 | JOY_BUTTON6)) rp = 1;
+            if (ji_ex.dwButtons & (JOY_BUTTON1 | JOY_BUTTON4)) rr = 1;
         }
     }
 #endif
@@ -1299,10 +1312,10 @@ static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
         JOYINFO ji;
         if (joyGetPos(id, &ji) == JOYERR_NOERROR) {
             found = 1;
-            if (ji.wXpos < 16000) pad->dx = -1;
-            else if (ji.wXpos > 49000) pad->dx = 1;
-            if (ji.wYpos < 16000) pad->dy = -1;
-            else if (ji.wYpos > 49000) pad->dy = 1;
+            if (ji.wXpos < 18000) pad->dx = -1;
+            else if (ji.wXpos > 47000) pad->dx = 1;
+            if (ji.wYpos < 18000) pad->dy = -1;
+            else if (ji.wYpos > 47000) pad->dy = 1;
             if (ji.wButtons & JOY_BUTTON1) rc = 1;
             if (ji.wButtons & JOY_BUTTON2) rb = 1;
             if (ji.wButtons & (JOY_BUTTON3 | JOY_BUTTON4)) rp = 1;
@@ -1317,7 +1330,7 @@ static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
 #endif
 
 /* ============================================================================
- * 7. TREES, GRASS, CARTOON BEE & BLACK BUGS (SINGLE & SPLIT-SCREEN)
+ * 7. TREES, GRASS, CARTOON BEE, BLACK BUGS, GOLDS & GOLD BAR
  * ============================================================================ */
 
 static void draw_tree_box(const BGC_Game *g, void *hdc_ptr, int tx, int ground_y, int min_x, int max_x, int min_y) {
@@ -1382,25 +1395,48 @@ static void draw_gold_coin(const BGC_Game *g, void *hdc_ptr, int x, int y) {
     draw_px(g, hdc_ptr, x - 1, y - 1, C_VGA_WING);
 }
 
-/* ============================================================================
- * 8. SINGLE & BEERACE GAMEPLAY LOGIC
- * ============================================================================ */
-
-static void spawn_single_gold(BGC_Game *g) {
-    g->gold_x = SCR_W - 14;
-    g->gold_y = 24 + (rand() % (SCR_H - 54));
+static void draw_gold_bar(const BGC_Game *g, void *hdc_ptr, int x, int y) {
+    draw_box(g, hdc_ptr, x - 7, y - 4, 14, 8, C_VGA_YELLOW, 1);
+    draw_line_simple(g, hdc_ptr, x - 5, y - 2, x + 4, y - 2, C_VGA_WING);
+    draw_px(g, hdc_ptr, x - 5, y - 1, C_VGA_WING);
 }
 
-static void spawn_single_bug(BGC_Game *g) {
-    g->bug_x = SCR_W - 12;
-    g->bug_y = 24 + (rand() % (SCR_H - 54));
-    g->bug_speed = 6 + (g->score / 30);
-    if (g->bug_speed > 14) g->bug_speed = 14;
+/* ============================================================================
+ * 8. SINGLE & BEERACE GAMEPLAY LOGIC (SMOOTH ASCENT + HOLD/TAP + MULTI-SPAWN)
+ * ============================================================================ */
+
+static int random_y_in_range(int min_y, int max_y) {
+    int span = max_y - min_y;
+    if (span <= 1) return min_y;
+    return min_y + (rand() % span);
+}
+
+static void spawn_single_gold_slot(BGC_Game *g, int idx) {
+    if (idx < 0 || idx >= MAX_GOLDS) return;
+    g->gold_x[idx] = SCR_W - 12 - (idx * 26);
+    g->gold_y[idx] = random_y_in_range(16, SCR_H - 30);
+}
+
+static void spawn_single_bug_slot(BGC_Game *g, int idx) {
+    if (idx < 0 || idx >= MAX_BUGS) return;
+    g->bug_x[idx] = SCR_W - 10 - (idx * 34);
+    g->bug_y[idx] = random_y_in_range(16, SCR_H - 30);
+    g->bug_speed[idx] = 5 + idx + (g->score / 35);
+    if (g->bug_speed[idx] > 14) g->bug_speed[idx] = 14;
+}
+
+static void spawn_single_gold_bar(BGC_Game *g) {
+    g->gold_bar_x = SCR_W - 16;
+    g->gold_bar_y = random_y_in_range(16, SCR_H - 30);
+    g->gold_bar_active = 1;
 }
 
 static void start_single_game(BGC_Game *g) {
+    int i;
     g->bee_x = SCR_W / 5;
     g->bee_y = SCR_H / 2;
+    g->bee_vx = 0;
+    g->bee_vy = 0;
     g->score = 0;
     g->health = 100;
     g->game_over = 0;
@@ -1409,22 +1445,49 @@ static void start_single_game(BGC_Game *g) {
     g->replay_count = 0;
     g->pause_idx = 0;
     g->screen = SCREEN_PLAYING;
-    spawn_single_gold(g);
-    spawn_single_bug(g);
+
+    for (i = 0; i < MAX_GOLDS; i++) spawn_single_gold_slot(g, i);
+    for (i = 0; i < MAX_BUGS;  i++) spawn_single_bug_slot(g, i);
+    spawn_single_gold_bar(g);
     set_dualsense_led_from_health(g, g->health);
 }
 
+static void spawn_racer_gold_slot(Racer *r, int idx, int pane_w, int pane_h, int seed_offset) {
+    int max_y = (pane_h > 44) ? (pane_h - 24) : 24;
+    if (idx < 0 || idx >= MAX_GOLDS) return;
+    r->gold_x[idx] = pane_w - 10 - (idx * 20);
+    r->gold_y[idx] = 14 + ((rand() + seed_offset + idx * 13) % (max_y - 12));
+}
+
+static void spawn_racer_bug_slot(Racer *r, int idx, int pane_w, int pane_h, int seed_offset) {
+    int max_y = (pane_h > 44) ? (pane_h - 24) : 24;
+    if (idx < 0 || idx >= MAX_BUGS) return;
+    r->bug_x[idx] = pane_w - 10 - (idx * 24);
+    r->bug_y[idx] = 14 + ((rand() + seed_offset * 3 + idx * 17) % (max_y - 12));
+    r->bug_speed[idx] = 5 + idx + (r->score / 35);
+    if (r->bug_speed[idx] > 13) r->bug_speed[idx] = 13;
+}
+
+static void spawn_racer_gold_bar(Racer *r, int pane_w, int pane_h, int seed_offset) {
+    int max_y = (pane_h > 44) ? (pane_h - 24) : 24;
+    r->gold_bar_x = pane_w - 12;
+    r->gold_bar_y = 14 + ((rand() + seed_offset * 5) % (max_y - 12));
+    r->gold_bar_active = 1;
+}
+
 static void init_racer(Racer *r, int pane_w, int pane_h, int seed_offset) {
+    int i;
     r->x = pane_w / 5;
     r->y = pane_h / 2;
+    r->vx = 0;
+    r->vy = 0;
     r->score = 0;
     r->health = 100;
     r->dead = 0;
-    r->gold_x = pane_w - 14;
-    r->gold_y = 20 + ((rand() + seed_offset) % ((pane_h > 45) ? (pane_h - 42) : 20));
-    r->bug_x = pane_w - 12;
-    r->bug_y = 24 + ((rand() + seed_offset * 3) % ((pane_h > 45) ? (pane_h - 42) : 20));
-    r->bug_speed = 7;
+
+    for (i = 0; i < MAX_GOLDS; i++) spawn_racer_gold_slot(r, i, pane_w, pane_h, seed_offset);
+    for (i = 0; i < MAX_BUGS;  i++) spawn_racer_bug_slot(r, i, pane_w, pane_h, seed_offset);
+    spawn_racer_gold_bar(r, pane_w, pane_h, seed_offset);
 }
 
 static void start_beerace(BGC_Game *g) {
@@ -1440,37 +1503,92 @@ static void start_beerace(BGC_Game *g) {
     set_dualsense_led_from_health(g, 100);
 }
 
-static int move_step_val(const BGC_Game *g) {
-    return (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 14 : 10;
-}
+static void apply_smooth_move_single(BGC_Game *g, int dx, int dy, int is_tap) {
+    int base_h = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
+    int up_boost = is_tap ? 9 : 5;
+    int down_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 6 : 4;
 
-static void move_single_bee(BGC_Game *g, int dx, int dy) {
-    int stp = move_step_val(g);
     if (g->screen != SCREEN_PLAYING || g->game_over) return;
-    g->bee_x += dx * stp;
-    g->bee_y += dy * stp;
-    if (g->bee_x < 12) g->bee_x = 12;
-    if (g->bee_x > SCR_W - 14) g->bee_x = SCR_W - 14;
-    if (g->bee_y < 18) g->bee_y = 18;
-    if (g->bee_y > SCR_H - 28) g->bee_y = SCR_H - 28;
+
+    if (dx < 0) g->bee_vx = -base_h;
+    else if (dx > 0) g->bee_vx = base_h;
+
+    if (dy < 0) {
+        g->bee_vy -= up_boost;
+        if (g->bee_vy < -14) g->bee_vy = -14;
+    } else if (dy > 0) {
+        g->bee_vy += down_spd;
+        if (g->bee_vy > 10) g->bee_vy = 10;
+    }
 }
 
-static void move_racer(const BGC_Game *g, Racer *r, int dx, int dy, int pane_w, int pane_h) {
-    int stp = move_step_val(g);
-    if (r->dead) return;
-    r->x += dx * stp;
-    r->y += dy * stp;
-    if (r->x < 10) r->x = 10;
-    if (r->x > pane_w - 12) r->x = pane_w - 12;
-    if (r->y < 18) r->y = 18;
-    if (r->y > pane_h - 26) r->y = pane_h - 26;
+static void update_smooth_bee_physics(BGC_Game *g) {
+    if (g->screen != SCREEN_PLAYING || g->game_over) return;
+
+    g->bee_x += g->bee_vx;
+    g->bee_y += g->bee_vy;
+
+    g->bee_vx = (g->bee_vx * 3) / 4;
+    if (g->bee_vy < 0) {
+        g->bee_vy += 1;
+        if (g->bee_vy > 0) g->bee_vy = 0;
+    } else if (g->bee_vy > 0) {
+        g->bee_vy -= 1;
+        if (g->bee_vy < 0) g->bee_vy = 0;
+    }
+
+    if (g->bee_x < 10) { g->bee_x = 10; g->bee_vx = 0; }
+    if (g->bee_x > SCR_W - 12) { g->bee_x = SCR_W - 12; g->bee_vx = 0; }
+    if (g->bee_y < 10) { g->bee_y = 10; g->bee_vy = 0; }
+    if (g->bee_y > SCR_H - 26) { g->bee_y = SCR_H - 26; g->bee_vy = 0; }
 }
 
-static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h) {
+static void apply_smooth_move_racer(const BGC_Game *g, Racer *r, int dx, int dy, int is_tap) {
+    int base_h = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 6 : 4;
+    int up_boost = is_tap ? 8 : 5;
+    int down_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 5 : 4;
+
     if (r->dead) return;
 
-    r->gold_x -= 6;
-    r->bug_x -= r->bug_speed;
+    if (dx < 0) r->vx = -base_h;
+    else if (dx > 0) r->vx = base_h;
+
+    if (dy < 0) {
+        r->vy -= up_boost;
+        if (r->vy < -13) r->vy = -13;
+    } else if (dy > 0) {
+        r->vy += down_spd;
+        if (r->vy > 9) r->vy = 9;
+    }
+}
+
+static void update_smooth_racer_physics(Racer *r, int pane_w, int pane_h) {
+    if (r->dead) return;
+
+    r->x += r->vx;
+    r->y += r->vy;
+
+    r->vx = (r->vx * 3) / 4;
+    if (r->vy < 0) {
+        r->vy += 1;
+        if (r->vy > 0) r->vy = 0;
+    } else if (r->vy > 0) {
+        r->vy -= 1;
+        if (r->vy < 0) r->vy = 0;
+    }
+
+    if (r->x < 8) { r->x = 8; r->vx = 0; }
+    if (r->x > pane_w - 10) { r->x = pane_w - 10; r->vx = 0; }
+    if (r->y < 10) { r->y = 10; r->vy = 0; }
+    if (r->y > pane_h - 26) { r->y = pane_h - 26; r->vy = 0; }
+}
+
+static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int seed_offset) {
+    int i;
+    if (r->dead) return;
+
+    update_smooth_racer_physics(r, pane_w, pane_h);
+
     if ((g->tick % 4l) == 0) {
         r->health -= 1;
     }
@@ -1482,34 +1600,50 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h) {
         return;
     }
 
-    if (r->gold_x < 8) {
-        r->gold_x = pane_w - 12;
-        r->gold_y = 20 + (rand() % ((pane_h > 45) ? (pane_h - 42) : 20));
+    for (i = 0; i < MAX_GOLDS; i++) {
+        r->gold_x[i] -= 5 + (i % 2);
+        if (r->gold_x[i] < 6) {
+            spawn_racer_gold_slot(r, i, pane_w, pane_h, seed_offset + (int)g->tick);
+        }
+        if (abs(r->x - r->gold_x[i]) < 12 && abs(r->y - r->gold_y[i]) < 12) {
+            r->score += 10;
+            r->health += 15;
+            if (r->health > 100) r->health = 100;
+            trigger_rumble_and_led(g, 14000, 14000, 2, 255, 215, 0);
+            spawn_racer_gold_slot(r, i, pane_w, pane_h, seed_offset + (int)g->tick);
+        }
     }
 
-    if (r->bug_x < 8) {
-        r->bug_x = pane_w - 10;
-        r->bug_y = 20 + (rand() % ((pane_h > 45) ? (pane_h - 42) : 20));
-        r->bug_speed = 7 + (r->score / 30);
-        if (r->bug_speed > 14) r->bug_speed = 14;
+    if (!r->gold_bar_active && ((g->tick % 120l) == 0)) {
+        spawn_racer_gold_bar(r, pane_w, pane_h, seed_offset + (int)g->tick);
+    }
+    if (r->gold_bar_active) {
+        r->gold_bar_x -= 4;
+        if (r->gold_bar_x < 8) {
+            r->gold_bar_active = 0;
+        } else if (abs(r->x - r->gold_bar_x) < 14 && abs(r->y - r->gold_bar_y) < 12) {
+            r->score += 30;
+            r->health += 25;
+            if (r->health > 100) r->health = 100;
+            r->gold_bar_active = 0;
+            trigger_rumble_and_led(g, 26000, 26000, 4, 255, 235, 30);
+        }
     }
 
-    if (abs(r->x - r->gold_x) < 13 && abs(r->y - r->gold_y) < 13) {
-        r->score += 10;
-        r->health += 15;
-        trigger_rumble_and_led(g, 14000, 14000, 2, 255, 215, 0);
-        r->gold_x = pane_w - 12;
-        r->gold_y = 20 + (rand() % ((pane_h > 45) ? (pane_h - 42) : 20));
-    }
-
-    if (abs(r->x - r->bug_x) < 13 && abs(r->y - r->bug_y) < 13) {
-        r->health -= 35;
-        trigger_rumble_and_led(g, 48000, 48000, 5, 240, 25, 25);
-        r->bug_x = pane_w - 10;
-        r->bug_y = 20 + (rand() % ((pane_h > 45) ? (pane_h - 42) : 20));
-        if (r->health <= 0) {
-            r->health = 0;
-            r->dead = 1;
+    for (i = 0; i < MAX_BUGS; i++) {
+        r->bug_x[i] -= r->bug_speed[i];
+        if (r->bug_x[i] < 6) {
+            spawn_racer_bug_slot(r, i, pane_w, pane_h, seed_offset + (int)g->tick);
+        }
+        if (abs(r->x - r->bug_x[i]) < 12 && abs(r->y - r->bug_y[i]) < 12) {
+            r->health -= 35;
+            trigger_rumble_and_led(g, 48000, 48000, 5, 240, 25, 25);
+            spawn_racer_bug_slot(r, i, pane_w, pane_h, seed_offset + (int)g->tick);
+            if (r->health <= 0) {
+                r->health = 0;
+                r->dead = 1;
+                return;
+            }
         }
     }
 }
@@ -1525,8 +1659,8 @@ static void step_beerace(BGC_Game *g) {
         if (!g->p2.dead) g->p2.health += 2;
     }
 
-    step_racer(g, &g->p1, half_w, SCR_H);
-    step_racer(g, &g->p2, half_w, SCR_H);
+    step_racer(g, &g->p1, half_w, SCR_H, 7);
+    step_racer(g, &g->p2, half_w, SCR_H, 19);
 
     if (g->p1.dead && !g->p2.dead) {
         g->race_over = 1;
@@ -1544,10 +1678,11 @@ static void step_beerace(BGC_Game *g) {
 }
 
 static void step_single_game(BGC_Game *g) {
+    int i;
     if (g->game_over) return;
 
-    g->gold_x -= 6;
-    g->bug_x -= g->bug_speed;
+    update_smooth_bee_physics(g);
+
     if ((g->tick % 4l) == 0) {
         g->health -= 1;
     }
@@ -1562,28 +1697,54 @@ static void step_single_game(BGC_Game *g) {
         return;
     }
 
-    if (g->gold_x < 8) spawn_single_gold(g);
-    if (g->bug_x < 8) spawn_single_bug(g);
-
-    if (abs(g->bee_x - g->gold_x) < 14 && abs(g->bee_y - g->gold_y) < 14) {
-        g->score += 10;
-        g->health += 15;
-        if (g->health > 100) g->health = 100;
-        trigger_rumble_and_led(g, 14000, 14000, 2, 255, 215, 0);
-        spawn_single_gold(g);
+    for (i = 0; i < MAX_GOLDS; i++) {
+        g->gold_x[i] -= 5 + (i % 2);
+        if (g->gold_x[i] < 8) {
+            spawn_single_gold_slot(g, i);
+        }
+        if (abs(g->bee_x - g->gold_x[i]) < 13 && abs(g->bee_y - g->gold_y[i]) < 13) {
+            g->score += 10;
+            g->health += 15;
+            if (g->health > 100) g->health = 100;
+            trigger_rumble_and_led(g, 14000, 14000, 2, 255, 215, 0);
+            spawn_single_gold_slot(g, i);
+        }
     }
 
-    if (abs(g->bee_x - g->bug_x) < 14 && abs(g->bee_y - g->bug_y) < 14) {
-        g->health -= 35;
-        trigger_rumble_and_led(g, 48000, 48000, 5, 240, 25, 25);
-        spawn_single_bug(g);
-        if (g->health <= 0) {
-            g->health = 0;
-            g->game_over = 1;
-            g->replay_recording = 0;
-            save_replay_to_file(g);
-            record_score_secure(g, g->score);
-            trigger_rumble_and_led(g, 60000, 60000, 8, 255, 20, 20);
+    if (!g->gold_bar_active && ((g->tick % 110l) == 0)) {
+        spawn_single_gold_bar(g);
+    }
+    if (g->gold_bar_active) {
+        g->gold_bar_x -= 5;
+        if (g->gold_bar_x < 8) {
+            g->gold_bar_active = 0;
+        } else if (abs(g->bee_x - g->gold_bar_x) < 15 && abs(g->bee_y - g->gold_bar_y) < 13) {
+            g->score += 30;
+            g->health += 25;
+            if (g->health > 100) g->health = 100;
+            g->gold_bar_active = 0;
+            trigger_rumble_and_led(g, 28000, 28000, 4, 255, 235, 30);
+        }
+    }
+
+    for (i = 0; i < MAX_BUGS; i++) {
+        g->bug_x[i] -= g->bug_speed[i];
+        if (g->bug_x[i] < 8) {
+            spawn_single_bug_slot(g, i);
+        }
+        if (abs(g->bee_x - g->bug_x[i]) < 13 && abs(g->bee_y - g->bug_y[i]) < 13) {
+            g->health -= 35;
+            trigger_rumble_and_led(g, 48000, 48000, 5, 240, 25, 25);
+            spawn_single_bug_slot(g, i);
+            if (g->health <= 0) {
+                g->health = 0;
+                g->game_over = 1;
+                g->replay_recording = 0;
+                save_replay_to_file(g);
+                record_score_secure(g, g->score);
+                trigger_rumble_and_led(g, 60000, 60000, 8, 255, 20, 20);
+                return;
+            }
         }
     }
 
@@ -1829,10 +1990,10 @@ static void render_controls(BGC_Game *g, void *hdc_ptr) {
 
     draw_str_5x7(g, hdc_ptr, 28, 42, "P1 MOVE : ARROWS / WASD / PAD1", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 56, "P2 RACE : IJKL / TFGH / PAD2", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 70, "DUALSENSE: HAPTIC + LED LIGHTBAR", C_VGA_RED);
-    draw_str_5x7(g, hdc_ptr, 28, 84, "SHOT BMP: F12  |  VIDEO VDO: V", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 98, "VAULT   : PHOTO + REPLAY + VIDEO", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 112, "BEERACE : STACK HP +2HP/10SEC", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 70, "HOLD OR TAP UP FOR SMOOTH LIFT", C_VGA_RED);
+    draw_str_5x7(g, hdc_ptr, 28, 84, "COIN:+10 BAR:+30 BUG:-35", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 98, "SHOT BMP: F12  |  VIDEO VDO: V", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 112, "PAD1/PAD2 WORK IN MENU & GAME", C_VGA_BLACK);
 
     draw_box(g, hdc_ptr, 84, 148, 152, 15, C_VGA_YELLOW, 1);
     draw_str_5x7(g, hdc_ptr, 92, 152, "> ENTER OR ESC BACK", C_VGA_BLACK);
@@ -1899,12 +2060,20 @@ static void render_pause(BGC_Game *g, void *hdc_ptr) {
 static void render_racer_pane(BGC_Game *g, void *hdc_ptr, const Racer *r, int vx, int vw, const char *tag) {
     char hud[48];
     int bar_w = r->health;
+    int i;
     if (bar_w > vw - 14) bar_w = vw - 14;
     if (bar_w < 0) bar_w = 0;
 
     draw_viewport_env(g, hdc_ptr, vx, 0, vw, SCR_H);
-    draw_gold_coin(g, hdc_ptr, vx + r->gold_x, r->gold_y);
-    draw_black_bug(g, hdc_ptr, vx + r->bug_x, r->bug_y, g->tick);
+    for (i = 0; i < MAX_GOLDS; i++) {
+        draw_gold_coin(g, hdc_ptr, vx + r->gold_x[i], r->gold_y[i]);
+    }
+    if (r->gold_bar_active) {
+        draw_gold_bar(g, hdc_ptr, vx + r->gold_bar_x, r->gold_bar_y);
+    }
+    for (i = 0; i < MAX_BUGS; i++) {
+        draw_black_bug(g, hdc_ptr, vx + r->bug_x[i], r->bug_y[i], g->tick);
+    }
     draw_cartoon_bee(g, hdc_ptr, vx + r->x, r->y, g->tick);
 
     draw_box(g, hdc_ptr, vx + 4, 4, vw - 8, 7, C_VGA_WING, 1);
@@ -1935,6 +2104,7 @@ static void render_beerace_split(BGC_Game *g, void *hdc_ptr) {
 
 static void render_scene(BGC_Game *g, void *hdc_ptr) {
     char hud[64];
+    int i;
 
     if (g->screen == SCREEN_MAIN_MENU) {
         render_main_menu(g, hdc_ptr);
@@ -1964,8 +2134,15 @@ static void render_scene(BGC_Game *g, void *hdc_ptr) {
     }
 
     draw_viewport_env(g, hdc_ptr, 0, 0, SCR_W, SCR_H);
-    draw_gold_coin(g, hdc_ptr, g->gold_x, g->gold_y);
-    draw_black_bug(g, hdc_ptr, g->bug_x, g->bug_y, g->tick);
+    for (i = 0; i < MAX_GOLDS; i++) {
+        draw_gold_coin(g, hdc_ptr, g->gold_x[i], g->gold_y[i]);
+    }
+    if (g->gold_bar_active) {
+        draw_gold_bar(g, hdc_ptr, g->gold_bar_x, g->gold_bar_y);
+    }
+    for (i = 0; i < MAX_BUGS; i++) {
+        draw_black_bug(g, hdc_ptr, g->bug_x[i], g->bug_y[i], g->tick);
+    }
     draw_cartoon_bee(g, hdc_ptr, g->bee_x, g->bee_y, g->tick);
 
     draw_box(g, hdc_ptr, 6, 5, 102, 8, C_VGA_WING, 1);
@@ -1992,53 +2169,122 @@ static void render_scene(BGC_Game *g, void *hdc_ptr) {
     capture_video_frame(g);
 }
 
+#if !BGC_DOS_TARGET
+static void poll_held_keyboard_win(BGC_Game *g) {
+    int p1_dx = 0, p1_dy = 0;
+    int p2_dx = 0, p2_dy = 0;
+
+    if (GetAsyncKeyState(VK_LEFT)  & 0x8000) p1_dx -= 1;
+    if (GetAsyncKeyState(VK_RIGHT) & 0x8000) p1_dx += 1;
+    if (GetAsyncKeyState(VK_UP)    & 0x8000) p1_dy -= 1;
+    if (GetAsyncKeyState(VK_DOWN)  & 0x8000) p1_dy += 1;
+
+    if (g->screen == SCREEN_PLAYING) {
+        if (GetAsyncKeyState('A') & 0x8000) p1_dx -= 1;
+        if (GetAsyncKeyState('D') & 0x8000) p1_dx += 1;
+        if (GetAsyncKeyState('W') & 0x8000) p1_dy -= 1;
+        if (GetAsyncKeyState('S') & 0x8000) p1_dy += 1;
+        if (p1_dx != 0 || p1_dy != 0) {
+            apply_smooth_move_single(g, p1_dx, p1_dy, 0);
+        }
+    } else if (g->screen == SCREEN_BEERACE) {
+        if (p1_dx != 0 || p1_dy != 0) {
+            apply_smooth_move_racer(g, &g->p1, p1_dx, p1_dy, 0);
+        }
+        if (GetAsyncKeyState('J') & 0x8000 || GetAsyncKeyState('F') & 0x8000) p2_dx -= 1;
+        if (GetAsyncKeyState('L') & 0x8000 || GetAsyncKeyState('H') & 0x8000) p2_dx += 1;
+        if (GetAsyncKeyState('I') & 0x8000 || GetAsyncKeyState('T') & 0x8000) p2_dy -= 1;
+        if (GetAsyncKeyState('K') & 0x8000 || GetAsyncKeyState('G') & 0x8000) p2_dy += 1;
+        if (p2_dx != 0 || p2_dy != 0) {
+            apply_smooth_move_racer(g, &g->p2, p2_dx, p2_dy, 0);
+        }
+    }
+}
+#endif
+
 static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
-    int half_w = SCR_W / 2;
+    int pad_dir_y = 0, pad_dir_x = 0;
+
     poll_single_pad(&g->pad1, 0);
     poll_single_pad(&g->pad2, 1);
 
+    if (g->pad1.dy != 0) pad_dir_y = g->pad1.dy;
+    else if (g->pad2.dy != 0) pad_dir_y = g->pad2.dy;
+
+    if (g->pad1.dx != 0) pad_dir_x = g->pad1.dx;
+    else if (g->pad2.dx != 0) pad_dir_x = g->pad2.dx;
+
     if (g->screen == SCREEN_MAIN_MENU) {
-        if (g->pad1.dy < 0 && ((g->tick % 3l) == 0)) g->menu_idx = (g->menu_idx + 6) % 7;
-        if (g->pad1.dy > 0 && ((g->tick % 3l) == 0)) g->menu_idx = (g->menu_idx + 1) % 7;
-        if (g->pad1.btn_confirm) activate_main_item(g, running);
+        if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
+            if (pad_dir_y < 0) g->menu_idx = (g->menu_idx + 6) % 7;
+            else if (pad_dir_y > 0) g->menu_idx = (g->menu_idx + 1) % 7;
+            g->pad1.nav_cooldown = 7;
+        }
+        if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_main_item(g, running);
     } else if (g->screen == SCREEN_MEDIA_VAULT) {
-        if (g->pad1.dx < 0 && ((g->tick % 3l) == 0)) switch_media_tab(g, -1);
-        if (g->pad1.dx > 0 && ((g->tick % 3l) == 0)) switch_media_tab(g,  1);
-        if (g->pad1.btn_confirm) toggle_current_media_play(g);
-        if (g->pad1.btn_retry) save_current_media_to_device(g);
-        if (g->pad1.btn_back) g->screen = SCREEN_MAIN_MENU;
+        if (pad_dir_x != 0 && g->pad1.nav_cooldown == 0) {
+            switch_media_tab(g, pad_dir_x);
+            g->pad1.nav_cooldown = 7;
+        }
+        if (g->pad1.btn_confirm || g->pad2.btn_confirm) toggle_current_media_play(g);
+        if (g->pad1.btn_retry || g->pad2.btn_retry) save_current_media_to_device(g);
+        if (g->pad1.btn_back || g->pad2.btn_back) g->screen = SCREEN_MAIN_MENU;
     } else if (g->screen == SCREEN_PLAYING) {
-        if (g->pad1.dx != 0 || g->pad1.dy != 0) move_single_bee(g, g->pad1.dx, g->pad1.dy);
-        if (g->pad1.btn_pause || g->pad1.btn_back) {
+        if (pad_dir_x != 0 || pad_dir_y != 0) {
+            apply_smooth_move_single(g, pad_dir_x, pad_dir_y, 0);
+        }
+        if (g->pad1.btn_pause || g->pad1.btn_back || g->pad2.btn_pause || g->pad2.btn_back) {
             g->prev_screen = SCREEN_PLAYING;
             g->pause_idx = 0;
             g->screen = SCREEN_PAUSED;
         }
-        if (g->game_over && g->pad1.btn_retry) start_single_game(g);
+        if (g->game_over && (g->pad1.btn_retry || g->pad2.btn_retry || g->pad1.btn_confirm || g->pad2.btn_confirm)) {
+            start_single_game(g);
+        }
     } else if (g->screen == SCREEN_BEERACE) {
-        if (g->pad1.dx != 0 || g->pad1.dy != 0) move_racer(g, &g->p1, g->pad1.dx, g->pad1.dy, half_w, SCR_H);
-        if (g->pad2.dx != 0 || g->pad2.dy != 0) move_racer(g, &g->p2, g->pad2.dx, g->pad2.dy, half_w, SCR_H);
+        if (g->pad1.dx != 0 || g->pad1.dy != 0) {
+            apply_smooth_move_racer(g, &g->p1, g->pad1.dx, g->pad1.dy, 0);
+        }
+        if (g->pad2.dx != 0 || g->pad2.dy != 0) {
+            apply_smooth_move_racer(g, &g->p2, g->pad2.dx, g->pad2.dy, 0);
+        }
         if (g->pad1.btn_pause || g->pad2.btn_pause) {
             g->prev_screen = SCREEN_BEERACE;
             g->pause_idx = 0;
             g->screen = SCREEN_PAUSED;
         }
-        if (g->race_over && (g->pad1.btn_retry || g->pad2.btn_retry)) start_beerace(g);
+        if (g->race_over && (g->pad1.btn_retry || g->pad2.btn_retry || g->pad1.btn_confirm || g->pad2.btn_confirm)) {
+            start_beerace(g);
+        }
     } else if (g->screen == SCREEN_PAUSED) {
-        if (g->pad1.dy < 0 && ((g->tick % 3l) == 0)) g->pause_idx = (g->pause_idx + 2) % 3;
-        if (g->pad1.dy > 0 && ((g->tick % 3l) == 0)) g->pause_idx = (g->pause_idx + 1) % 3;
-        if (g->pad1.btn_confirm) activate_pause_item(g);
-        if (g->pad1.btn_pause || g->pad1.btn_back) g->screen = g->prev_screen;
+        if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
+            if (pad_dir_y < 0) g->pause_idx = (g->pause_idx + 2) % 3;
+            else if (pad_dir_y > 0) g->pause_idx = (g->pause_idx + 1) % 3;
+            g->pad1.nav_cooldown = 7;
+        }
+        if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_pause_item(g);
+        if (g->pad1.btn_pause || g->pad1.btn_back || g->pad2.btn_pause || g->pad2.btn_back) {
+            g->screen = g->prev_screen;
+        }
     } else if (g->screen == SCREEN_SETTINGS) {
-        if (g->pad1.dy < 0 && ((g->tick % 3l) == 0)) g->settings_idx = (g->settings_idx + 4) % 5;
-        if (g->pad1.dy > 0 && ((g->tick % 3l) == 0)) g->settings_idx = (g->settings_idx + 1) % 5;
-        if (g->pad1.btn_confirm || (g->pad1.dx != 0 && ((g->tick % 3l) == 0))) toggle_setting_item(g);
-        if (g->pad1.btn_back) g->screen = g->prev_screen;
+        if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
+            if (pad_dir_y < 0) g->settings_idx = (g->settings_idx + 4) % 5;
+            else if (pad_dir_y > 0) g->settings_idx = (g->settings_idx + 1) % 5;
+            g->pad1.nav_cooldown = 7;
+        }
+        if ((g->pad1.btn_confirm || g->pad2.btn_confirm) || (pad_dir_x != 0 && g->pad1.nav_cooldown == 0)) {
+            toggle_setting_item(g);
+            g->pad1.nav_cooldown = 7;
+        }
+        if (g->pad1.btn_back || g->pad2.btn_back) g->screen = g->prev_screen;
     } else if (g->screen == SCREEN_CONTROLS) {
-        if (g->pad1.btn_confirm || g->pad1.btn_back || g->pad1.btn_pause) g->screen = g->prev_screen;
+        if (g->pad1.btn_confirm || g->pad1.btn_back || g->pad1.btn_pause ||
+            g->pad2.btn_confirm || g->pad2.btn_back || g->pad2.btn_pause) {
+            g->screen = g->prev_screen;
+        }
     } else if (g->screen == SCREEN_WIFI_SCORE) {
-        if (g->pad1.btn_confirm) compare_score_over_wifi_ip(g);
-        if (g->pad1.btn_back) g->screen = SCREEN_MAIN_MENU;
+        if (g->pad1.btn_confirm || g->pad2.btn_confirm) compare_score_over_wifi_ip(g);
+        if (g->pad1.btn_back || g->pad2.btn_back) g->screen = SCREEN_MAIN_MENU;
     }
 }
 
@@ -2072,6 +2318,7 @@ static void dos_set_video(unsigned char mode) {
 int main(int argc, char **argv) {
     BGC_Game game;
     int running = 1;
+    int i;
     (void)argc;
     (void)argv;
 
@@ -2084,8 +2331,9 @@ int main(int argc, char **argv) {
     game.ctrl_speed_mode = CTRL_SPEED_FAST;
     game.screen = SCREEN_MAIN_MENU;
     read_obfuscated_vault(&game);
-    spawn_single_gold(&game);
-    spawn_single_bug(&game);
+    for (i = 0; i < MAX_GOLDS; i++) spawn_single_gold_slot(&game, i);
+    for (i = 0; i < MAX_BUGS;  i++) spawn_single_bug_slot(&game, i);
+    spawn_single_gold_bar(&game);
 
 #if BGC_DJGPP_TARGET
     bgc_dos_init_vram();
@@ -2113,15 +2361,15 @@ int main(int argc, char **argv) {
                     if (ext == 80) game.settings_idx = (game.settings_idx + 1) % 5;
                     if (ext == 75 || ext == 77) toggle_setting_item(&game);
                 } else if (game.screen == SCREEN_PLAYING) {
-                    if (ext == 75) move_single_bee(&game, -1, 0);
-                    if (ext == 77) move_single_bee(&game,  1, 0);
-                    if (ext == 72) move_single_bee(&game, 0, -1);
-                    if (ext == 80) move_single_bee(&game, 0,  1);
+                    if (ext == 75) apply_smooth_move_single(&game, -1, 0, 1);
+                    if (ext == 77) apply_smooth_move_single(&game,  1, 0, 1);
+                    if (ext == 72) apply_smooth_move_single(&game, 0, -1, 1);
+                    if (ext == 80) apply_smooth_move_single(&game, 0,  1, 1);
                 } else if (game.screen == SCREEN_BEERACE) {
-                    if (ext == 75) move_racer(&game, &game.p1, -1, 0, SCR_W / 2, SCR_H);
-                    if (ext == 77) move_racer(&game, &game.p1,  1, 0, SCR_W / 2, SCR_H);
-                    if (ext == 72) move_racer(&game, &game.p1, 0, -1, SCR_W / 2, SCR_H);
-                    if (ext == 80) move_racer(&game, &game.p1, 0,  1, SCR_W / 2, SCR_H);
+                    if (ext == 75) apply_smooth_move_racer(&game, &game.p1, -1, 0, 1);
+                    if (ext == 77) apply_smooth_move_racer(&game, &game.p1,  1, 0, 1);
+                    if (ext == 72) apply_smooth_move_racer(&game, &game.p1, 0, -1, 1);
+                    if (ext == 80) apply_smooth_move_racer(&game, &game.p1, 0,  1, 1);
                 }
             } else {
                 if (ch == 'v' || ch == 'V') {
@@ -2137,10 +2385,10 @@ int main(int argc, char **argv) {
                     if (ch == 13) activate_main_item(&game, &running);
                     else if (ch == 27) running = 0;
                 } else if (game.screen == SCREEN_PLAYING) {
-                    if (ch == 'a' || ch == 'A') move_single_bee(&game, -1, 0);
-                    if (ch == 'd' || ch == 'D') move_single_bee(&game,  1, 0);
-                    if (ch == 'w' || ch == 'W') move_single_bee(&game, 0, -1);
-                    if (ch == 's' || ch == 'S') move_single_bee(&game, 0,  1);
+                    if (ch == 'a' || ch == 'A') apply_smooth_move_single(&game, -1, 0, 1);
+                    if (ch == 'd' || ch == 'D') apply_smooth_move_single(&game,  1, 0, 1);
+                    if (ch == 'w' || ch == 'W') apply_smooth_move_single(&game, 0, -1, 1);
+                    if (ch == 's' || ch == 'S') apply_smooth_move_single(&game, 0,  1, 1);
                     if (ch == 'p' || ch == 'P' || ch == 27) {
                         game.prev_screen = SCREEN_PLAYING;
                         game.pause_idx = 0;
@@ -2148,10 +2396,10 @@ int main(int argc, char **argv) {
                     } else if (game.game_over && (ch == 'r' || ch == 'R')) start_single_game(&game);
                     else if (game.game_over && (ch == 'm' || ch == 'M')) { game.menu_idx = 0; game.screen = SCREEN_MAIN_MENU; }
                 } else if (game.screen == SCREEN_BEERACE) {
-                    if (ch == 'j' || ch == 'J') move_racer(&game, &game.p2, -1, 0, SCR_W / 2, SCR_H);
-                    if (ch == 'l' || ch == 'L') move_racer(&game, &game.p2,  1, 0, SCR_W / 2, SCR_H);
-                    if (ch == 'i' || ch == 'I') move_racer(&game, &game.p2, 0, -1, SCR_W / 2, SCR_H);
-                    if (ch == 'k' || ch == 'K') move_racer(&game, &game.p2, 0,  1, SCR_W / 2, SCR_H);
+                    if (ch == 'j' || ch == 'J') apply_smooth_move_racer(&game, &game.p2, -1, 0, 1);
+                    if (ch == 'l' || ch == 'L') apply_smooth_move_racer(&game, &game.p2,  1, 0, 1);
+                    if (ch == 'i' || ch == 'I') apply_smooth_move_racer(&game, &game.p2, 0, -1, 1);
+                    if (ch == 'k' || ch == 'K') apply_smooth_move_racer(&game, &game.p2, 0,  1, 1);
                     if (ch == 'p' || ch == 'P' || ch == 27) {
                         game.prev_screen = SCREEN_BEERACE;
                         game.pause_idx = 0;
@@ -2266,14 +2514,19 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     switch (msg) {
         case WM_CREATE:
-            srand((unsigned int)time(NULL));
-            init_gdi_double_buffer(&g_win, hwnd);
-            spawn_single_gold(&g_win);
-            spawn_single_bug(&g_win);
-            SetTimer(hwnd, 1, 15, NULL);
+            {
+                int i;
+                srand((unsigned int)time(NULL));
+                init_gdi_double_buffer(&g_win, hwnd);
+                for (i = 0; i < MAX_GOLDS; i++) spawn_single_gold_slot(&g_win, i);
+                for (i = 0; i < MAX_BUGS;  i++) spawn_single_bug_slot(&g_win, i);
+                spawn_single_gold_bar(&g_win);
+                SetTimer(hwnd, 1, 15, NULL);
+            }
             return 0;
 
         case WM_TIMER:
+            poll_held_keyboard_win(&g_win);
             poll_dual_pads_and_apply(&g_win, &running);
             if (!running) {
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
@@ -2305,13 +2558,13 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             } else if (g_win.screen == SCREEN_MAIN_MENU) {
                 if (wParam == VK_UP)   g_win.menu_idx = (g_win.menu_idx + 6) % 7;
                 if (wParam == VK_DOWN) g_win.menu_idx = (g_win.menu_idx + 1) % 7;
-                if (wParam == VK_RETURN) activate_main_item(&g_win, &running);
+                if (wParam == VK_RETURN || wParam == VK_SPACE) activate_main_item(&g_win, &running);
                 if (!running) PostMessage(hwnd, WM_CLOSE, 0, 0);
             } else if (g_win.screen == SCREEN_PLAYING) {
-                if (wParam == VK_LEFT  || wParam == 'A') move_single_bee(&g_win, -1, 0);
-                if (wParam == VK_RIGHT || wParam == 'D') move_single_bee(&g_win,  1, 0);
-                if (wParam == VK_UP    || wParam == 'W') move_single_bee(&g_win, 0, -1);
-                if (wParam == VK_DOWN  || wParam == 'S') move_single_bee(&g_win, 0,  1);
+                if (wParam == VK_LEFT  || wParam == 'A') apply_smooth_move_single(&g_win, -1, 0, 1);
+                if (wParam == VK_RIGHT || wParam == 'D') apply_smooth_move_single(&g_win,  1, 0, 1);
+                if (wParam == VK_UP    || wParam == 'W') apply_smooth_move_single(&g_win, 0, -1, 1);
+                if (wParam == VK_DOWN  || wParam == 'S') apply_smooth_move_single(&g_win, 0,  1, 1);
                 if (wParam == 'P' || wParam == VK_ESCAPE) {
                     g_win.prev_screen = SCREEN_PLAYING;
                     g_win.pause_idx = 0;
@@ -2320,15 +2573,15 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (g_win.game_over && wParam == 'R') start_single_game(&g_win);
                 if (g_win.game_over && wParam == 'M') { g_win.menu_idx = 0; g_win.screen = SCREEN_MAIN_MENU; }
             } else if (g_win.screen == SCREEN_BEERACE) {
-                if (wParam == VK_LEFT)  move_racer(&g_win, &g_win.p1, -1, 0, SCR_W / 2, SCR_H);
-                if (wParam == VK_RIGHT) move_racer(&g_win, &g_win.p1,  1, 0, SCR_W / 2, SCR_H);
-                if (wParam == VK_UP)    move_racer(&g_win, &g_win.p1, 0, -1, SCR_W / 2, SCR_H);
-                if (wParam == VK_DOWN)  move_racer(&g_win, &g_win.p1, 0,  1, SCR_W / 2, SCR_H);
+                if (wParam == VK_LEFT)  apply_smooth_move_racer(&g_win, &g_win.p1, -1, 0, 1);
+                if (wParam == VK_RIGHT) apply_smooth_move_racer(&g_win, &g_win.p1,  1, 0, 1);
+                if (wParam == VK_UP)    apply_smooth_move_racer(&g_win, &g_win.p1, 0, -1, 1);
+                if (wParam == VK_DOWN)  apply_smooth_move_racer(&g_win, &g_win.p1, 0,  1, 1);
 
-                if (wParam == 'J') move_racer(&g_win, &g_win.p2, -1, 0, SCR_W / 2, SCR_H);
-                if (wParam == 'L') move_racer(&g_win, &g_win.p2,  1, 0, SCR_W / 2, SCR_H);
-                if (wParam == 'I') move_racer(&g_win, &g_win.p2, 0, -1, SCR_W / 2, SCR_H);
-                if (wParam == 'K') move_racer(&g_win, &g_win.p2, 0,  1, SCR_W / 2, SCR_H);
+                if (wParam == 'J' || wParam == 'F') apply_smooth_move_racer(&g_win, &g_win.p2, -1, 0, 1);
+                if (wParam == 'L' || wParam == 'H') apply_smooth_move_racer(&g_win, &g_win.p2,  1, 0, 1);
+                if (wParam == 'I' || wParam == 'T') apply_smooth_move_racer(&g_win, &g_win.p2, 0, -1, 1);
+                if (wParam == 'K' || wParam == 'G') apply_smooth_move_racer(&g_win, &g_win.p2, 0,  1, 1);
 
                 if (wParam == 'P' || wParam == VK_ESCAPE) {
                     g_win.prev_screen = SCREEN_BEERACE;
@@ -2340,7 +2593,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             } else if (g_win.screen == SCREEN_PAUSED) {
                 if (wParam == VK_UP)   g_win.pause_idx = (g_win.pause_idx + 2) % 3;
                 if (wParam == VK_DOWN) g_win.pause_idx = (g_win.pause_idx + 1) % 3;
-                if (wParam == VK_RETURN) activate_pause_item(&g_win);
+                if (wParam == VK_RETURN || wParam == VK_SPACE) activate_pause_item(&g_win);
                 if (wParam == '1') g_win.screen = g_win.prev_screen;
                 if (wParam == '2') { g_win.settings_idx = 0; g_win.screen = SCREEN_SETTINGS; }
                 if (wParam == '3') { g_win.menu_idx = 0; g_win.screen = SCREEN_MAIN_MENU; }
