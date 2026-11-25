@@ -10,8 +10,8 @@
  * + NO PASSIVE HEALTH DRAIN (HEALTH CHANGES ONLY ON GOLD / BAR / BUG)
  * + GAME OVER AT PAUSE POSITION WITH RETRY & MAIN MENU BUTTONS
  * + BEERACE 2P SECOND CONTROLLER LOBBY & COMPACT SPLIT-SCREEN SPRITES
- * + SINGLE-FILE AUTO-ADAPTATION FOR DOS/FREEDOS (DJGPP & WATCOM), WIN16,
- *   WIN9X/2000/XP & WIN32/64
+ * + FULL MOUSE SUPPORT (ALL MENUS + GAMEPLAY + PAD2 MODE + L+R / R-CLICK PAUSE)
+ * + WIN 1.0 / 2.0 / 3.0 / 3.1X / BOB / NT 3.1 / MT 5.0 WORKSTATION & DOS
  * ============================================================================ */
 
 #include <stdio.h>
@@ -38,7 +38,7 @@
 #else
     #define BGC_DOS_TARGET 0
     #define BGC_DJGPP_TARGET 0
-    #if !defined(_WIN16) && !defined(__WINDOWS_386__) && !defined(_M_I86)
+    #if !defined(_WIN16) && !defined(__WINDOWS_386__) && !defined(_M_I86) && !defined(_WIN32_WCE) && (_WIN32_WINNT >= 0x0400 || !defined(_WIN32_WINNT))
         #include <winsock2.h>
         #include <ws2tcpip.h>
         #define BGC_HAS_SOCKETS 1
@@ -168,6 +168,22 @@ typedef struct {
 } BGC_Pad;
 
 typedef struct {
+    int available;
+    int x;
+    int y;
+    int prev_x;
+    int prev_y;
+    int left_down;
+    int right_down;
+    int prev_left;
+    int prev_right;
+    int click_left;
+    int click_right;
+    int pause_chord_fired;
+    int act_as_pad2;
+} BGC_Mouse;
+
+typedef struct {
     int x;
     int y;
     int vx;
@@ -268,6 +284,7 @@ typedef struct {
     int ctrl_speed_mode;
     BGC_Pad pad1;
     BGC_Pad pad2;
+    BGC_Mouse mouse;
 
 #if !BGC_DOS_TARGET
     HDC mem_dc;
@@ -631,12 +648,12 @@ static void blit_frame_to_screen(const BGC_Game *g, void *hdc_ptr, const unsigne
 }
 
 /* ============================================================================
- * 2. RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR (XINPUT + HID)
+ * 2. RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR (WIN32+ / NT 5.0+ SAFE)
  * ============================================================================ */
 
 static void apply_rumble_and_dualsense(unsigned short left_val, unsigned short right_val,
                                        unsigned char r, unsigned char gr, unsigned char b) {
-#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
+#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16) && (!defined(_WIN32_WINNT) || _WIN32_WINNT >= 0x0500)
     HMODULE h_xi = LoadLibraryA("xinput1_4.dll");
     if (!h_xi) h_xi = LoadLibraryA("xinput9_1_0.dll");
     if (!h_xi) h_xi = LoadLibraryA("xinput1_3.dll");
@@ -1149,8 +1166,153 @@ static void compare_score_over_wifi_ip(BGC_Game *g) {
 }
 
 /* ============================================================================
- * 6. DUAL GAMEPAD LAYER (PAD 1 & PAD 2)
+ * 6. DUAL GAMEPAD LAYER (PAD 1 & PAD 2) + LEGACY MOUSE LAYER
  * ============================================================================ */
+
+static void init_mouse_state(BGC_Mouse *m) {
+    memset(m, 0, sizeof(*m));
+    m->x = SCR_W / 2;
+    m->y = SCR_H / 2;
+    m->prev_x = m->x;
+    m->prev_y = m->y;
+    m->act_as_pad2 = 1;
+}
+
+static void finalize_mouse_frame(BGC_Mouse *m) {
+    m->click_left  = (m->left_down  && !m->prev_left)  ? 1 : 0;
+    m->click_right = (m->right_down && !m->prev_right) ? 1 : 0;
+
+    if (!m->left_down || !m->right_down) {
+        m->pause_chord_fired = 0;
+    }
+
+    m->prev_left  = m->left_down;
+    m->prev_right = m->right_down;
+}
+
+#if BGC_DOS_TARGET
+
+static void dos_init_mouse_driver(BGC_Mouse *m) {
+    m->available = 0;
+#if BGC_DJGPP_TARGET
+    {
+        __dpmi_regs r;
+        memset(&r, 0, sizeof(r));
+        r.x.ax = 0x0000;
+        __dpmi_int(0x33, &r);
+        if (r.x.ax != 0) m->available = 1;
+    }
+#elif defined(__386__)
+    {
+        union REGS r_in, r_out;
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.w.ax = 0x0000;
+        int386(0x33, &r_in, &r_out);
+        if (r_out.w.ax != 0) m->available = 1;
+    }
+#else
+    {
+        union REGS r_in, r_out;
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.x.ax = 0x0000;
+        int86(0x33, &r_in, &r_out);
+        if (r_out.x.ax != 0) m->available = 1;
+    }
+#endif
+}
+
+static void poll_legacy_mouse(BGC_Mouse *m) {
+    int raw_x = m->x;
+    int raw_y = m->y;
+    unsigned int btns = 0;
+
+    m->prev_x = m->x;
+    m->prev_y = m->y;
+    m->click_left = 0;
+    m->click_right = 0;
+
+    if (!m->available) return;
+
+#if BGC_DJGPP_TARGET
+    {
+        __dpmi_regs r;
+        memset(&r, 0, sizeof(r));
+        r.x.ax = 0x0003;
+        __dpmi_int(0x33, &r);
+        btns = (unsigned int)r.x.bx;
+        raw_x = (int)r.x.cx;
+        raw_y = (int)r.x.dx;
+    }
+#elif defined(__386__)
+    {
+        union REGS r_in, r_out;
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.w.ax = 0x0003;
+        int386(0x33, &r_in, &r_out);
+        btns = (unsigned int)r_out.w.bx;
+        raw_x = (int)r_out.w.cx;
+        raw_y = (int)r_out.w.dx;
+    }
+#else
+    {
+        union REGS r_in, r_out;
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.x.ax = 0x0003;
+        int86(0x33, &r_in, &r_out);
+        btns = (unsigned int)r_out.x.bx;
+        raw_x = (int)r_out.x.cx;
+        raw_y = (int)r_out.x.dx;
+    }
+#endif
+
+    if (raw_x > SCR_W) raw_x = raw_x / 2;
+    if (raw_x < 0) raw_x = 0;
+    if (raw_x >= SCR_W) raw_x = SCR_W - 1;
+    if (raw_y < 0) raw_y = 0;
+    if (raw_y >= SCR_H) raw_y = SCR_H - 1;
+
+    m->x = raw_x;
+    m->y = raw_y;
+    m->left_down  = (btns & 0x01u) ? 1 : 0;
+    m->right_down = (btns & 0x02u) ? 1 : 0;
+    finalize_mouse_frame(m);
+}
+
+#else
+
+static void update_win_mouse_pos(BGC_Game *g, HWND hwnd, LPARAM lParam) {
+    RECT rc;
+    int cw, ch;
+    int px = (int)(short)LOWORD(lParam);
+    int py = (int)(short)HIWORD(lParam);
+
+    GetClientRect(hwnd, &rc);
+    cw = rc.right - rc.left;
+    ch = rc.bottom - rc.top;
+
+    g->mouse.available = 1;
+    g->mouse.prev_x = g->mouse.x;
+    g->mouse.prev_y = g->mouse.y;
+
+    if (cw > 0) g->mouse.x = (px * SCR_W) / cw;
+    if (ch > 0) g->mouse.y = (py * SCR_H) / ch;
+
+    if (g->mouse.x < 0) g->mouse.x = 0;
+    if (g->mouse.x >= SCR_W) g->mouse.x = SCR_W - 1;
+    if (g->mouse.y < 0) g->mouse.y = 0;
+    if (g->mouse.y >= SCR_H) g->mouse.y = SCR_H - 1;
+}
+
+static void poll_legacy_mouse(BGC_Mouse *m) {
+#if (BGC_WIN_ARCH != 16)
+    if (GetSystemMetrics(SM_MOUSEPRESENT) != 0) {
+        m->available = 1;
+    }
+#endif
+    finalize_mouse_frame(m);
+}
+
+#endif
 
 static void update_pad_edges(BGC_Pad *pad, int c_conf, int c_back, int c_pause, int c_retry) {
     pad->btn_confirm = (c_conf  && !pad->prev_confirm) ? 1 : 0;
@@ -1447,6 +1609,20 @@ static void draw_mini_gold_bar_race(const BGC_Game *g, void *hdc_ptr, int x, int
     draw_px(g, hdc_ptr, x - 3, y - 1, C_VGA_WING);
 }
 
+static void draw_mouse_cursor(const BGC_Game *g, void *hdc_ptr) {
+    int mx = g->mouse.x;
+    int my = g->mouse.y;
+    if (!g->mouse.available) return;
+    if (mx < 0 || mx >= SCR_W || my < 0 || my >= SCR_H) return;
+
+    draw_line_simple(g, hdc_ptr, mx, my, mx, my + 7, C_VGA_BLACK);
+    draw_line_simple(g, hdc_ptr, mx, my, mx + 5, my + 5, C_VGA_BLACK);
+    draw_line_simple(g, hdc_ptr, mx + 2, my + 4, mx + 5, my + 5, C_VGA_BLACK);
+    draw_line_simple(g, hdc_ptr, mx + 2, my + 4, mx + 3, my + 7, C_VGA_BLACK);
+    draw_line_simple(g, hdc_ptr, mx + 1, my + 2, mx + 1, my + 5, C_VGA_WING);
+    draw_px(g, hdc_ptr, mx + 2, my + 3, C_VGA_WING);
+}
+
 /* ============================================================================
  * 8. SINGLE & BEERACE GAMEPLAY LOGIC (SMOOTH ASCENT + HOLD/TAP + MULTI-SPAWN)
  * ============================================================================ */
@@ -1543,7 +1719,7 @@ static void open_beerace_lobby(BGC_Game *g) {
     init_racer(&g->p2, half_w, SCR_H, 19);
     g->race_started = 0;
     g->p1_ready = 1;
-    g->p2_ready = g->pad2.connected ? 1 : 0;
+    g->p2_ready = (g->pad2.connected || (g->mouse.available && g->mouse.act_as_pad2)) ? 1 : 0;
     g->p2_is_pad = g->pad2.connected ? 1 : 0;
     g->race_over = 0;
     g->race_winner = 0;
@@ -1926,6 +2102,178 @@ static void activate_main_item(BGC_Game *g, int *running) {
     }
 }
 
+static int point_in_box(int px, int py, int bx, int by, int bw, int bh) {
+    return (px >= bx && px < bx + bw && py >= by && py < by + bh) ? 1 : 0;
+}
+
+static void apply_mouse_to_game(BGC_Game *g, int *running) {
+    BGC_Mouse *m = &g->mouse;
+    int pause_requested = 0;
+
+    poll_legacy_mouse(m);
+
+    if (m->left_down && m->right_down && !m->pause_chord_fired) {
+        m->pause_chord_fired = 1;
+        pause_requested = 1;
+    } else if (m->click_right) {
+        pause_requested = 1;
+    }
+
+    if (g->screen == SCREEN_MAIN_MENU) {
+        int i;
+        for (i = 0; i < 7; i++) {
+            int y = 42 + i * 20;
+            if (point_in_box(m->x, m->y, 68, y - 3, 184, 13)) {
+                g->menu_idx = i;
+                if (m->click_left) {
+                    activate_main_item(g, running);
+                    return;
+                }
+            }
+        }
+    } else if (g->screen == SCREEN_MEDIA_VAULT) {
+        if (m->click_left) {
+            if (point_in_box(m->x, m->y, 12, 6, 92, 10)) {
+                g->media_tab = MEDIA_TAB_PHOTO;
+                switch_media_tab(g, 0);
+                return;
+            } else if (point_in_box(m->x, m->y, 114, 6, 92, 10)) {
+                g->media_tab = MEDIA_TAB_REPLAY;
+                switch_media_tab(g, 0);
+                return;
+            } else if (point_in_box(m->x, m->y, 216, 6, 92, 10)) {
+                g->media_tab = MEDIA_TAB_VIDEO;
+                switch_media_tab(g, 0);
+                return;
+            } else if (point_in_box(m->x, m->y, 12, 178, 296, 15)) {
+                toggle_current_media_play(g);
+                return;
+            }
+        }
+    } else if (g->screen == SCREEN_PLAYING) {
+        if (g->game_over) {
+            int bx = 58, by = 42, bw = 204, i;
+            for (i = 0; i < 3; i++) {
+                int y = by + 30 + i * 22;
+                if (point_in_box(m->x, m->y, bx + 10, y - 3, bw - 20, 14)) {
+                    g->gameover_idx = i;
+                    if (m->click_left) {
+                        activate_gameover_item(g, 0);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+
+        if (pause_requested) {
+            g->prev_screen = SCREEN_PLAYING;
+            g->pause_idx = 0;
+            g->screen = SCREEN_PAUSED;
+            return;
+        }
+
+        if (m->left_down || m->x != m->prev_x || m->y != m->prev_y) {
+            int mdx = 0, mdy = 0;
+            if (m->x < g->bee_x - 4) mdx = -1;
+            else if (m->x > g->bee_x + 4) mdx = 1;
+            if (m->y < g->bee_y - 4) mdy = -1;
+            else if (m->y > g->bee_y + 4) mdy = 1;
+            if (mdx != 0 || mdy != 0) {
+                apply_smooth_move_single(g, mdx, mdy, m->click_left ? 1 : 0);
+            }
+        }
+    } else if (g->screen == SCREEN_BEERACE) {
+        if (!g->race_started) {
+            if (m->act_as_pad2 && (m->x != m->prev_x || m->y != m->prev_y || m->click_left)) {
+                g->p2_ready = 1;
+            }
+            if (m->click_left && point_in_box(m->x, m->y, 54, 108, 212, 20) && g->p2_ready) {
+                launch_beerace_match(g);
+                return;
+            }
+            return;
+        }
+        if (g->race_over) {
+            int bx = 58, by = 42, bw = 204, i;
+            for (i = 0; i < 3; i++) {
+                int y = by + 30 + i * 22;
+                if (point_in_box(m->x, m->y, bx + 10, y - 3, bw - 20, 14)) {
+                    g->gameover_idx = i;
+                    if (m->click_left) {
+                        activate_gameover_item(g, 1);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+        if (pause_requested) {
+            g->prev_screen = SCREEN_BEERACE;
+            g->pause_idx = 0;
+            g->screen = SCREEN_PAUSED;
+            return;
+        }
+        if (m->act_as_pad2 && (m->left_down || m->x != m->prev_x || m->y != m->prev_y)) {
+            int half_w = SCR_W / 2;
+            int local_x = (m->x >= half_w) ? (m->x - half_w) : m->x;
+            int pdx = 0, pdy = 0;
+            g->p2_ready = 1;
+            if (local_x < g->p2.x - 4) pdx = -1;
+            else if (local_x > g->p2.x + 4) pdx = 1;
+            if (m->y < g->p2.y - 4) pdy = -1;
+            else if (m->y > g->p2.y + 4) pdy = 1;
+            if (pdx != 0 || pdy != 0) {
+                apply_smooth_move_racer(g, &g->p2, pdx, pdy, m->click_left ? 1 : 0);
+            }
+        }
+    } else if (g->screen == SCREEN_PAUSED) {
+        int bx = (g->pause_style == PAUSE_STYLE_COMPACT) ? 78 : 58;
+        int by = (g->pause_style == PAUSE_STYLE_COMPACT) ? 54 : 42;
+        int bw = (g->pause_style == PAUSE_STYLE_COMPACT) ? 164 : 204;
+        int sy = (g->pause_style == PAUSE_STYLE_COMPACT) ? (by + 26) : (by + 30);
+        int i;
+        for (i = 0; i < 3; i++) {
+            int y = sy + i * 18;
+            if (point_in_box(m->x, m->y, bx + 10, y - 2, bw - 20, 12)) {
+                g->pause_idx = i;
+                if (m->click_left) {
+                    activate_pause_item(g);
+                    return;
+                }
+            }
+        }
+        if (m->click_right) {
+            g->screen = g->prev_screen;
+        }
+    } else if (g->screen == SCREEN_SETTINGS) {
+        int i;
+        for (i = 0; i < 5; i++) {
+            int y = 50 + i * 22;
+            if (point_in_box(m->x, m->y, 50, y - 3, 220, 12)) {
+                g->settings_idx = i;
+                if (m->click_left) {
+                    toggle_setting_item(g);
+                    return;
+                }
+            }
+        }
+        if (m->click_right) g->screen = g->prev_screen;
+    } else if (g->screen == SCREEN_CONTROLS) {
+        if (m->click_left && point_in_box(m->x, m->y, 84, 148, 152, 15)) {
+            g->screen = g->prev_screen;
+        } else if (m->click_right) {
+            g->screen = g->prev_screen;
+        }
+    } else if (g->screen == SCREEN_WIFI_SCORE) {
+        if (m->click_left && point_in_box(m->x, m->y, 68, 124, 184, 15)) {
+            compare_score_over_wifi_ip(g);
+        } else if (m->click_right) {
+            g->screen = SCREEN_MAIN_MENU;
+        }
+    }
+}
+
 static void draw_capture_banners(const BGC_Game *g, void *hdc_ptr) {
     if (g->video_recording) {
         draw_box(g, hdc_ptr, 250, 16, 64, 11, C_VGA_RED, 1);
@@ -1993,6 +2341,7 @@ static void render_main_menu(BGC_Game *g, void *hdc_ptr) {
         }
         draw_str_5x7(g, hdc_ptr, 86, y, items[i], C_VGA_BLACK);
     }
+    draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_beerace_lobby(const BGC_Game *g, void *hdc_ptr) {
@@ -2013,11 +2362,12 @@ static void render_beerace_lobby(const BGC_Game *g, void *hdc_ptr) {
 
     if (g->p2_ready) {
         if (g->p2_is_pad) sprintf(p2_state, "P2 SCREEN: GAMEPAD 2 READY");
+        else if (g->mouse.available && g->mouse.act_as_pad2) sprintf(p2_state, "P2 SCREEN: MOUSE PAD2 READY");
         else sprintf(p2_state, "P2 SCREEN: KEYBOARD P2 READY");
         draw_str_5x7(g, hdc_ptr, 38, 70, p2_state, C_VGA_GRASS);
     } else {
         draw_str_5x7(g, hdc_ptr, 38, 70, "P2 SCREEN: WAITING 2ND CTRL...", C_VGA_RED);
-        draw_str_5x7(g, hdc_ptr, 38, 84, "NEED PAD2 OR P2 KEYS (IJKL/TFGH)", C_VGA_BLACK);
+        draw_str_5x7(g, hdc_ptr, 38, 84, "NEED PAD2 / MOUSE / P2 KEYS", C_VGA_BLACK);
     }
 
     if (g->p2_ready) {
@@ -2029,6 +2379,7 @@ static void render_beerace_lobby(const BGC_Game *g, void *hdc_ptr) {
     }
 
     draw_str_5x7(g, hdc_ptr, 66, 148, "ESC: ANA MENU", C_VGA_BLACK);
+    draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_media_vault(BGC_Game *g, void *hdc_ptr) {
@@ -2071,6 +2422,7 @@ static void render_media_vault(BGC_Game *g, void *hdc_ptr) {
     draw_box(g, hdc_ptr, 12, 178, 296, 15, C_VGA_YELLOW, 1);
     draw_str_5x7(g, hdc_ptr, 18, 182, "< >:MODE  SPACE:PLAY  S:SAVE  ESC", C_VGA_BLACK);
     draw_capture_banners(g, hdc_ptr);
+    draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_wifi_score(BGC_Game *g, void *hdc_ptr) {
@@ -2095,6 +2447,7 @@ static void render_wifi_score(BGC_Game *g, void *hdc_ptr) {
 
     draw_box(g, hdc_ptr, 68, 124, 184, 15, C_VGA_YELLOW, 1);
     draw_str_5x7(g, hdc_ptr, 76, 128, "> ENTER:SYNC  ESC:BACK", C_VGA_BLACK);
+    draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_controls(BGC_Game *g, void *hdc_ptr) {
@@ -2103,14 +2456,15 @@ static void render_controls(BGC_Game *g, void *hdc_ptr) {
     draw_str_5x7(g, hdc_ptr, 118, 24, "CONTROLS", C_VGA_BLACK);
 
     draw_str_5x7(g, hdc_ptr, 28, 42, "P1 MOVE : ARROWS / WASD / PAD1", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 56, "P2 RACE : IJKL / TFGH / PAD2", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 70, "HOLD OR TAP UP FOR SMOOTH LIFT", C_VGA_RED);
+    draw_str_5x7(g, hdc_ptr, 28, 56, "MOUSE   : MOVE + L+R OR R PAUSE", C_VGA_RED);
+    draw_str_5x7(g, hdc_ptr, 28, 70, "P2 RACE : IJKL / TFGH / PAD2/MSE", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 84, "COIN:+10 BAR:+30 BUG:-35", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 98, "SHOT BMP: F12  |  VIDEO VDO: V", C_VGA_BLACK);
-    draw_str_5x7(g, hdc_ptr, 28, 112, "PAD1/PAD2 WORK IN MENU & GAME", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 112, "WIN1-3.1X/BOB/NT3.1/MT5/DOS OK", C_VGA_BLACK);
 
     draw_box(g, hdc_ptr, 84, 148, 152, 15, C_VGA_YELLOW, 1);
-    draw_str_5x7(g, hdc_ptr, 92, 152, "> ENTER OR ESC BACK", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 92, 152, "> CLICK OR ESC BACK", C_VGA_BLACK);
+    draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_settings(BGC_Game *g, void *hdc_ptr) {
@@ -2140,6 +2494,7 @@ static void render_settings(BGC_Game *g, void *hdc_ptr) {
         }
         draw_str_5x7(g, hdc_ptr, 68, y, rows[i], C_VGA_BLACK);
     }
+    draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_pause(BGC_Game *g, void *hdc_ptr) {
@@ -2217,6 +2572,7 @@ static void render_beerace_split(BGC_Game *g, void *hdc_ptr) {
         render_gameover_at_pause_pos(g, hdc_ptr, win_txt);
     }
     draw_capture_banners(g, hdc_ptr);
+    draw_mouse_cursor(g, hdc_ptr);
 }
 
 static void render_scene(BGC_Game *g, void *hdc_ptr) {
@@ -2246,6 +2602,7 @@ static void render_scene(BGC_Game *g, void *hdc_ptr) {
     if (g->screen == SCREEN_BEERACE) {
         render_beerace_split(g, hdc_ptr);
         if (g->screen == SCREEN_PAUSED) render_pause(g, hdc_ptr);
+        draw_mouse_cursor(g, hdc_ptr);
         capture_video_frame(g);
         return;
     }
@@ -2281,10 +2638,11 @@ static void render_scene(BGC_Game *g, void *hdc_ptr) {
         render_gameover_at_pause_pos(g, hdc_ptr, "GAME OVER");
     }
 
+    draw_mouse_cursor(g, hdc_ptr);
     capture_video_frame(g);
 }
 
-#if !BGC_DOS_TARGET
+#if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16) && (!defined(_WIN32_WINNT) || _WIN32_WINNT >= 0x0400)
 static void poll_held_keyboard_win(BGC_Game *g) {
     int p1_dx = 0, p1_dy = 0;
     int p2_dx = 0, p2_dy = 0;
@@ -2331,6 +2689,18 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
 
     poll_single_pad(&g->pad1, 0);
     poll_single_pad(&g->pad2, 1);
+
+    if (!g->pad2.connected && g->mouse.act_as_pad2 && g->mouse.available) {
+        int mdx = 0, mdy = 0;
+        if (g->mouse.x < SCR_W / 2 - 12) mdx = -1;
+        else if (g->mouse.x > SCR_W / 2 + 12) mdx = 1;
+        if (g->mouse.y < SCR_H / 2 - 12) mdy = -1;
+        else if (g->mouse.y > SCR_H / 2 + 12) mdy = 1;
+        update_pad_edges(&g->pad2, g->mouse.click_left, g->mouse.click_right,
+                         (g->mouse.left_down && g->mouse.right_down) ? 1 : 0, 0);
+        g->pad2.dx = mdx;
+        g->pad2.dy = mdy;
+    }
 
     if (g->pad1.dy != 0) pad_dir_y = g->pad1.dy;
     else if (g->pad2.dy != 0) pad_dir_y = g->pad2.dy;
@@ -2381,7 +2751,7 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
         if (!g->race_started) {
             if (g->pad2.connected || g->pad2.dx != 0 || g->pad2.dy != 0 || g->pad2.btn_confirm) {
                 g->p2_ready = 1;
-                g->p2_is_pad = 1;
+                g->p2_is_pad = g->pad2.connected ? 1 : 0;
             }
             if (g->p2_ready && (g->pad1.btn_confirm || g->pad2.btn_confirm)) {
                 launch_beerace_match(g);
@@ -2452,7 +2822,7 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
 }
 
 /* ============================================================================
- * 10. DOS / FREEDOS (VGA MODE 13H) & WINDOWS (DOUBLE-BUFFERED GDI + VGA)
+ * 10. DOS / FREEDOS (VGA MODE 13H) & WINDOWS 1.0..MT5.0/BOB (GDI + VGA)
  * ============================================================================ */
 #if BGC_DOS_TARGET
 
@@ -2487,6 +2857,8 @@ int main(int argc, char **argv) {
 
     srand((unsigned int)time(NULL));
     memset(&game, 0, sizeof(game));
+    init_mouse_state(&game.mouse);
+    dos_init_mouse_driver(&game.mouse);
     strcpy(game.peer_ip, "192.168.1.16");
     game.gdi_available = 0;
     game.backend = BACKEND_VGA;
@@ -2619,6 +2991,7 @@ int main(int argc, char **argv) {
             }
         }
 
+        apply_mouse_to_game(&game, &running);
         poll_dual_pads_and_apply(&game, &running);
         step_world(&game);
         render_scene(&game, NULL);
@@ -2651,6 +3024,8 @@ static void detect_backend(BGC_Game *g, const char *cmd) {
     if (cmd && cmd[0] != '\0') {
         if (strstr(cmd, "--vga") != NULL) g->backend = BACKEND_VGA;
         else if (strstr(cmd, "--gdi") != NULL && g->gdi_available) g->backend = BACKEND_GDI;
+        if (strstr(cmd, "--mouse-pad2-off") != NULL) g->mouse.act_as_pad2 = 0;
+        else if (strstr(cmd, "--mouse-pad2") != NULL) g->mouse.act_as_pad2 = 1;
     }
 }
 
@@ -2723,8 +3098,39 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
             return 0;
 
+        case WM_MOUSEMOVE:
+            update_win_mouse_pos(&g_win, hwnd, lParam);
+            g_win.mouse.left_down  = (wParam & MK_LBUTTON) ? 1 : 0;
+            g_win.mouse.right_down = (wParam & MK_RBUTTON) ? 1 : 0;
+            return 0;
+
+        case WM_LBUTTONDOWN:
+            update_win_mouse_pos(&g_win, hwnd, lParam);
+            g_win.mouse.left_down = 1;
+            if (wParam & MK_RBUTTON) g_win.mouse.right_down = 1;
+            return 0;
+
+        case WM_LBUTTONUP:
+            update_win_mouse_pos(&g_win, hwnd, lParam);
+            g_win.mouse.left_down = 0;
+            return 0;
+
+        case WM_RBUTTONDOWN:
+            update_win_mouse_pos(&g_win, hwnd, lParam);
+            g_win.mouse.right_down = 1;
+            if (wParam & MK_LBUTTON) g_win.mouse.left_down = 1;
+            return 0;
+
+        case WM_RBUTTONUP:
+            update_win_mouse_pos(&g_win, hwnd, lParam);
+            g_win.mouse.right_down = 0;
+            return 0;
+
         case WM_TIMER:
+#if (BGC_WIN_ARCH != 16) && (!defined(_WIN32_WINNT) || _WIN32_WINNT >= 0x0400)
             poll_held_keyboard_win(&g_win);
+#endif
+            apply_mouse_to_game(&g_win, &running);
             poll_dual_pads_and_apply(&g_win, &running);
             if (!running) {
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
@@ -2893,6 +3299,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     (void)hPrev;
 
     memset(&g_win, 0, sizeof(g_win));
+    init_mouse_state(&g_win.mouse);
     strcpy(g_win.peer_ip, "192.168.1.16");
     g_win.screen = SCREEN_MAIN_MENU;
     g_win.pause_style = PAUSE_STYLE_FULL;
@@ -2909,12 +3316,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszMenuName  = NULL;
-    wc.lpszClassName = "BGC_BeeraceNetClass";
+    wc.lpszClassName = "BGC_ClassicWinClass";
 
     if (!RegisterClass(&wc)) return 0;
 
     hwnd = CreateWindow(
-        "BGC_BeeraceNetClass",
+        "BGC_ClassicWinClass",
         BGC_TITLE,
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
