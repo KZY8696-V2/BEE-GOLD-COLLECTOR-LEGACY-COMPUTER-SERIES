@@ -1,13 +1,3 @@
-name: Build DOS (DJGPP) & 9x + All NT (Visual Studio)
-
-on:
-  push:
-    branches: [ "**" ]
-  pull_request:
-    branches: [ "**" ]
-  workflow_dispatch:
-
-jobs:
   build-dos-djgpp:
     runs-on: ubuntu-latest
 
@@ -18,23 +8,26 @@ jobs:
       - name: Prepare dist directory
         run: mkdir -p dist
 
-      - name: Install DJGPP toolchain
+      - name: Build DOS / FreeDOS (bgc_freedos.exe) via DJGPP Docker image
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential p7zip-full curl
-          if command -v i586-pc-msdosdjgpp-gcc >/dev/null 2>&1; then
-            echo "DJGPP_CC=i586-pc-msdosdjgpp-gcc" >> "$GITHUB_ENV"
-          elif command -v i686-pc-msdosdjgpp-gcc >/dev/null 2>&1; then
-            echo "DJGPP_CC=i686-pc-msdosdjgpp-gcc" >> "$GITHUB_ENV"
+          if docker run --rm -v "${PWD}:/src" -w /src djfalk/djgpp:latest \
+            gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
+            echo "Built dist/bgc_freedos.exe via Docker DJGPP"
+          elif docker run --rm -v "${PWD}:/src" -w /src rcmov/djgpp:latest \
+            i586-pc-msdosdjgpp-gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
+            echo "Built dist/bgc_freedos.exe via fallback DJGPP image"
           else
-            sudo apt-get install -y djgpp-gcc || true
-            if command -v djgpp-gcc >/dev/null 2>&1; then
-              echo "DJGPP_CC=djgpp-gcc" >> "$GITHUB_ENV"
-            else
-              echo "DJGPP compiler not found in apt."
-              exit 1
-            fi
+            echo "No prebuilt DJGPP Docker image available; check registry or custom DJGPP binary."
+            exit 1
           fi
+          ls -lh dist/bgc_freedos.exe
+
+      - name: Upload DOS / FreeDOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dos-freedos-djgpp
+          path: dist/*
+
 
       - name: Build DOS / FreeDOS (bgc_freedos.exe)
         run: |
@@ -47,11 +40,11 @@ jobs:
           name: dos-freedos-djgpp
           path: dist/*
 
-  build-9x-and-nt-vs:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: cmd
+         build-9x-and-nt-vs:
+           runs-on: windows-latest
+           defaults:
+            run:
+            shell: cmd
 
     steps:
       - name: Checkout repository
