@@ -1,0 +1,96 @@
+name: Build Windows XP32 XP64 Vista 7 8 8.1 10 11
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  build-windows-targets:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare dist directory
+        run: if not exist dist mkdir dist
+
+      - name: Build x86 targets (XP32, Vista, 7, 8, 8.1, 10, 11)
+        run: |
+          set "VSDIR="
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo Visual Studio C++ tools not found via vswhere.
+            exit /b 1
+          )
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          echo Active WindowsSDKVersion=%WindowsSDKVersion%
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0501 /D_WIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp32.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win11_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+      - name: Build x64 targets (XP64, Vista, 7, 8, 8.1, 10, 11)
+        run: |
+          set "VSDIR="
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo Visual Studio C++ tools not found via vswhere.
+            exit /b 1
+          )
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          echo Active WindowsSDKVersion=%WindowsSDKVersion%
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0502 /D_WIN32_WINNT=0x0502 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win11_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+          dir dist\*.exe
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bgc-win-xp32-to-win11
+          path: dist/*
