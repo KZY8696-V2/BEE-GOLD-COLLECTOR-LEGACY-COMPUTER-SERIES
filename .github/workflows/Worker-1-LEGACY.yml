@@ -45,7 +45,8 @@ jobs:
             echo LIB=%WATCOM%\LIB386\DOS;%WATCOM%\LIB386;%WATCOM%\LIB386\NT;%WATCOM%\LIB286\WIN;%WATCOM%\LIB286>> "%GITHUB_ENV%"
             echo %WATCOM%\BINNT64;%WATCOM%\BINNT>> "%GITHUB_PATH%"
             set "PATH=%WATCOM%\BINNT64;%WATCOM%\BINNT;%PATH%"
-            dir /s /b "%WATCOM%\*.lib" "%WATCOM%\BIN*\wcl*.exe" 2>nul
+            dir /b "%WATCOM%"
+            dir /s /b "%WATCOM%\*.lib" "%WATCOM%\BIN*\*.exe" 2>nul || echo No .lib or .exe files found under %WATCOM%
           ) else (
             echo Open Watcom binary directory not auto-detected
             exit /b 1
@@ -117,42 +118,4 @@ jobs:
             exit /b 1
           )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
-          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || (echo [NT2000] NT4 build failed & exit /b 1)
-          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || (echo [NT2000] 2000 build failed & exit /b 1)
-          dir dist\bgc_nt40.exe dist\bgc_win2000.exe
-
-      - name: 5. Build Windows XP 32-bit (XP32 - MSVC x86)
-        id: build_xp32
-        continue-on-error: true
-        run: |
-          set "VSDIR="
-          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
-          if not defined VSDIR (
-            echo [XP32] VSDIR not found via vswhere
-            exit /b 1
-          )
-          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
-          cl /nologo /O2 /FIwinsock2.h /DWIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp32.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || (echo [XP32] XP32 build failed & exit /b 1)
-          dir dist\bgc_xp32.exe
-
-      - name: Upload retro & XP32 artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bgc-retro-nt-to-xp
-          path: dist/*
-          if-no-files-found: ignore
-
-      - name: Check overall retro build status
-        if: always()
-        run: |
-          set "FAILED="
-          if not "%build_freedos_outcome%"=="success" set "FAILED=%FAILED% build_freedos(%build_freedos_outcome%)"
-          if not "%build_win16_outcome%"=="success" set "FAILED=%FAILED% build_win16(%build_win16_outcome%)"
-          if not "%build_9x_outcome%"=="success" set "FAILED=%FAILED% build_9x(%build_9x_outcome%)"
-          if not "%build_nt_2000_outcome%"=="success" set "FAILED=%FAILED% build_nt_2000(%build_nt_2000_outcome%)"
-          if not "%build_xp32_outcome%"=="success" set "FAILED=%FAILED% build_xp32(%build_xp32_outcome%)"
-          if defined FAILED (
-            echo FAILED TARGETS:%FAILED%
-            exit /b 1
-          )
+          cl /nologo /
