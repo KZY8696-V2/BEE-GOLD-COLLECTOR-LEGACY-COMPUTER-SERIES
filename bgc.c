@@ -7,6 +7,7 @@
  * + UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN + SAVE TO DEVICE)
  * + MULTI-GOLD, MULTI-BUG & GOLD BAR COLLECTIBLE
  * + HOLD + TAP SMOOTH ASCENT & FULL MAIN MENU GAMEPAD SUPPORT
+ * + NO PASSIVE HEALTH DRAIN (HEALTH CHANGES ONLY ON GOLD / BAR / BUG)
  * + SINGLE-FILE AUTO-ADAPTATION FOR DOS/FREEDOS (DJGPP & WATCOM), WIN16,
  *   WIN9X/2000/XP & WIN32/64
  * ============================================================================ */
@@ -1589,17 +1590,6 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int seed_o
 
     update_smooth_racer_physics(r, pane_w, pane_h);
 
-    if ((g->tick % 4l) == 0) {
-        r->health -= 1;
-    }
-
-    if (r->health <= 0) {
-        r->health = 0;
-        r->dead = 1;
-        trigger_rumble_and_led(g, 60000, 60000, 8, 255, 20, 20);
-        return;
-    }
-
     for (i = 0; i < MAX_GOLDS; i++) {
         r->gold_x[i] -= 5 + (i % 2);
         if (r->gold_x[i] < 6) {
@@ -1682,20 +1672,6 @@ static void step_single_game(BGC_Game *g) {
     if (g->game_over) return;
 
     update_smooth_bee_physics(g);
-
-    if ((g->tick % 4l) == 0) {
-        g->health -= 1;
-    }
-
-    if (g->health <= 0) {
-        g->health = 0;
-        g->game_over = 1;
-        g->replay_recording = 0;
-        save_replay_to_file(g);
-        record_score_secure(g, g->score);
-        trigger_rumble_and_led(g, 60000, 60000, 8, 255, 20, 20);
-        return;
-    }
 
     for (i = 0; i < MAX_GOLDS; i++) {
         g->gold_x[i] -= 5 + (i % 2);
