@@ -1,3 +1,15 @@
+name: Build DOS (DJGPP) and 9x + All NT (Visual Studio)
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
   build-dos-djgpp:
     runs-on: ubuntu-latest
 
@@ -10,14 +22,12 @@
 
       - name: Build DOS / FreeDOS (bgc_freedos.exe) via DJGPP Docker image
         run: |
-          if docker run --rm -v "${PWD}:/src" -w /src djfalk/djgpp:latest \
-            gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
+          if docker run --rm -v "${PWD}:/src" -w /src djfalk/djgpp:latest gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
             echo "Built dist/bgc_freedos.exe via Docker DJGPP"
-          elif docker run --rm -v "${PWD}:/src" -w /src rcmov/djgpp:latest \
-            i586-pc-msdosdjgpp-gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
+          elif docker run --rm -v "${PWD}:/src" -w /src rcmov/djgpp:latest i586-pc-msdosdjgpp-gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
             echo "Built dist/bgc_freedos.exe via fallback DJGPP image"
           else
-            echo "No prebuilt DJGPP Docker image available; check registry or custom DJGPP binary."
+            echo "No prebuilt DJGPP Docker image available"
             exit 1
           fi
           ls -lh dist/bgc_freedos.exe
@@ -28,23 +38,11 @@
           name: dos-freedos-djgpp
           path: dist/*
 
-
-      - name: Build DOS / FreeDOS (bgc_freedos.exe)
-        run: |
-          "${DJGPP_CC}" -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe
-          ls -lh dist/bgc_freedos.exe
-
-      - name: Upload DOS / FreeDOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dos-freedos-djgpp
-          path: dist/*
-
-         build-9x-and-nt-vs:
-           runs-on: windows-latest
-           defaults:
-            run:
-            shell: cmd
+  build-9x-and-nt-vs:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
 
     steps:
       - name: Checkout repository
@@ -63,10 +61,12 @@
           )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
           echo Active WindowsSDKVersion=%WindowsSDKVersion%
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0400 /D_WIN32_WINDOWS=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win95_98.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0490 /D_WIN32_WINDOWS=0x0490 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_winme.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0400 /D_WIN32_WINDOWS=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win95_98.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0490 /D_WIN32_WINDOWS=0x0490 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_winme.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
 
-      - name: Build All NT-Based Targets (NT 4.0 -> 2000 / XP / Vista / 7 / 8 / 8.1 / 10-11) with VS
+      - name: Build All NT-Based Targets with VS
         run: |
           set "VSDIR="
           for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
@@ -76,25 +76,39 @@
           )
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
           echo Active WindowsSDKVersion=%WindowsSDKVersion%
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0400 /D_WIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0500 /D_WIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0501 /D_WIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_11_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0400 /D_WIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0500 /D_WIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0501 /D_WIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_11_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
 
           call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0502 /D_WIN32_WINNT=0x0502 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp_2003_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
-          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_11_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0502 /D_WIN32_WINNT=0x0502 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp_2003_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_11_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
           dir dist\*.exe
 
-      - name: Upload Windows 9x & NT VS artifact
+      - name: Upload Windows 9x and NT VS artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-9x-nt-vs
