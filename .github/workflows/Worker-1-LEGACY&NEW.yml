@@ -20,16 +20,42 @@ jobs:
       - name: Prepare dist directory
         run: mkdir -p dist
 
-      - name: Build DOS / FreeDOS (bgc_freedos.exe) via DJGPP Docker image
+      - name: Install DJGPP toolchain from official GitHub releases
         run: |
-          if docker run --rm -v "${PWD}:/src" -w /src djfalk/djgpp:latest gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
-            echo "Built dist/bgc_freedos.exe via Docker DJGPP"
-          elif docker run --rm -v "${PWD}:/src" -w /src rcmov/djgpp:latest i586-pc-msdosdjgpp-gcc -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe; then
-            echo "Built dist/bgc_freedos.exe via fallback DJGPP image"
-          else
-            echo "No prebuilt DJGPP Docker image available"
+          sudo apt-get update
+          sudo apt-get install -y curl tar xz-utils p7zip-full
+          mkdir -p /opt/djgpp
+          RELEASE_URL=$(curl -fsSL https://api.github.com/repos/andrewwutwut/build-djgpp/releases/latest \
+            | grep -Eo 'https://[^"]*(linux|x86_64)[^"]*\.(tar\.(gz|bz2|xz)|7z|zip)' \
+            | head -n 1)
+          echo "Resolved DJGPP URL: ${RELEASE_URL}"
+          if [ -z "${RELEASE_URL}" ]; then
+            echo "Could not resolve DJGPP release archive from andrewwutwut/build-djgpp"
             exit 1
           fi
+          curl -fSL --retry 3 "${RELEASE_URL}" -o /tmp/djgpp_pkg
+          case "${RELEASE_URL}" in
+            *.7z) 7z x /tmp/djgpp_pkg -o/opt/djgpp -y >/dev/null ;;
+            *.zip) unzip -q /tmp/djgpp_pkg -d /opt/djgpp ;;
+            *) tar -xf /tmp/djgpp_pkg -C /opt/djgpp ;;
+          esac
+          DJGPP_BIN_DIR=$(find /opt/djgpp -maxdepth 4 -type f -name '*djgpp*-gcc' -printf '%h\n' | head -n 1)
+          if [ -z "${DJGPP_BIN_DIR}" ]; then
+            DJGPP_BIN_DIR=$(find /opt/djgpp -maxdepth 4 -type f -name 'i586-pc-msdosdjgpp-gcc' -printf '%h\n' | head -n 1)
+          fi
+          echo "DJGPP_BIN_DIR=${DJGPP_BIN_DIR}"
+          if [ -z "${DJGPP_BIN_DIR}" ]; then
+            ls -la /opt/djgpp
+            exit 1
+          fi
+          echo "${DJGPP_BIN_DIR}" >> "$GITHUB_PATH"
+          DJGPP_CC=$(find "${DJGPP_BIN_DIR}" -maxdepth 1 -type f -name '*-gcc' | head -n 1)
+          echo "DJGPP_CC=${DJGPP_CC}" >> "$GITHUB_ENV"
+
+      - name: Build DOS / FreeDOS (bgc_freedos.exe)
+        run: |
+          echo "Using compiler: ${DJGPP_CC}"
+          "${DJGPP_CC}" -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe
           ls -lh dist/bgc_freedos.exe
 
       - name: Upload DOS / FreeDOS artifact
