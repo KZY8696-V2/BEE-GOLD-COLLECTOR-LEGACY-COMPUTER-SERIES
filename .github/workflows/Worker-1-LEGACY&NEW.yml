@@ -20,41 +20,22 @@ jobs:
       - name: Prepare dist directory
         run: mkdir -p dist
 
-      - name: Install DJGPP toolchain from official GitHub releases
+      - name: Install DJGPP toolchain (v3.4 linux64 gcc1220)
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl tar xz-utils p7zip-full
+          sudo apt-get install -y curl tar bzip2
           mkdir -p /opt/djgpp
-          RELEASE_URL=$(curl -fsSL https://api.github.com/repos/andrewwutwut/build-djgpp/releases/latest \
-            | grep -Eo 'https://[^"]*(linux|x86_64)[^"]*\.(tar\.(gz|bz2|xz)|7z|zip)' \
-            | head -n 1)
-          echo "Resolved DJGPP URL: ${RELEASE_URL}"
-          if [ -z "${RELEASE_URL}" ]; then
-            echo "Could not resolve DJGPP release archive from andrewwutwut/build-djgpp"
-            exit 1
-          fi
-          curl -fSL --retry 3 "${RELEASE_URL}" -o /tmp/djgpp_pkg
-          case "${RELEASE_URL}" in
-            *.7z) 7z x /tmp/djgpp_pkg -o/opt/djgpp -y >/dev/null ;;
-            *.zip) unzip -q /tmp/djgpp_pkg -d /opt/djgpp ;;
-            *) tar -xf /tmp/djgpp_pkg -C /opt/djgpp ;;
-          esac
-          DJGPP_BIN_DIR=$(find /opt/djgpp -maxdepth 4 -type f -name '*djgpp*-gcc' -printf '%h\n' | head -n 1)
-          if [ -z "${DJGPP_BIN_DIR}" ]; then
-            DJGPP_BIN_DIR=$(find /opt/djgpp -maxdepth 4 -type f -name 'i586-pc-msdosdjgpp-gcc' -printf '%h\n' | head -n 1)
-          fi
-          echo "DJGPP_BIN_DIR=${DJGPP_BIN_DIR}"
-          if [ -z "${DJGPP_BIN_DIR}" ]; then
-            ls -la /opt/djgpp
-            exit 1
-          fi
-          echo "${DJGPP_BIN_DIR}" >> "$GITHUB_PATH"
-          DJGPP_CC=$(find "${DJGPP_BIN_DIR}" -maxdepth 1 -type f -name '*-gcc' | head -n 1)
+          curl -fSL --retry 3 "https://github.com/andrewwutw/build-djgpp/releases/download/v3.4/djgpp-linux64-gcc1220.tar.bz2" -o /tmp/djgpp-linux64-gcc1220.tar.bz2
+          tar -xjf /tmp/djgpp-linux64-gcc1220.tar.bz2 -C /opt/djgpp
+          DJGPP_BIN=$(find /opt/djgpp -maxdepth 4 -type f -name '*djgpp*-gcc' -printf '%h\n' | head -n 1)
+          echo "DJGPP_BIN=${DJGPP_BIN}"
+          test -n "${DJGPP_BIN}"
+          echo "${DJGPP_BIN}" >> "$GITHUB_PATH"
+          DJGPP_CC=$(find "${DJGPP_BIN}" -maxdepth 1 -type f -name '*-gcc' | head -n 1)
           echo "DJGPP_CC=${DJGPP_CC}" >> "$GITHUB_ENV"
 
       - name: Build DOS / FreeDOS (bgc_freedos.exe)
         run: |
-          echo "Using compiler: ${DJGPP_CC}"
           "${DJGPP_CC}" -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe
           ls -lh dist/bgc_freedos.exe
 
