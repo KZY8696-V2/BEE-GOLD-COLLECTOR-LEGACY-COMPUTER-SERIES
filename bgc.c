@@ -1,8 +1,9 @@
 /* ============================================================================
- * BEE GOLD COLLECTOR: LEGACY COMPUTERS SERIES + BEERACE + WIFI SCORE
+ * BEE GOLD COLLECTOR v1.1 - 2026 KGAMER (VGA ONLY)
+ * + UNIFIED VGA BUFFER RENDERING (NO GDI BACKEND)
+ * + TWO SEPARATE COLOR TABLES FROM STANDARD WEB HEX CODES (BGR32 & RGB/BMP)
  * + BUILD-TIME SECRET KEY (BGC_VAULT_KEY)
  * + REPLAY RECORDING, VIDEO RECORDING TO FILE & SCREENSHOT (.BMP) EXPORT
- * + DOUBLE-BUFFERED GDI (CreateCompatibleDC/Bitmap/BitBlt) + GDI FONT
  * + RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR
  * + UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN + SAVE TO DEVICE)
  * + MULTI-GOLD, MULTI-BUG & GOLD BAR COLLECTIBLE
@@ -70,8 +71,10 @@
     #define BGC_IS_16BIT 0
 #endif
 
+#define BGC_VERSION_STR "1.1"
+
 #ifndef BGC_TITLE
-    #define BGC_TITLE "BEE GOLD COLLECTOR: LEGACY & BEERACE"
+    #define BGC_TITLE "BEE GOLD COLLECTOR v1.1 - 2026 KGAMER"
 #endif
 
 #ifndef BGC_VAULT_KEY
@@ -118,7 +121,6 @@
 #define MEDIA_TAB_VIDEO  2
 
 #define BACKEND_VGA 1
-#define BACKEND_GDI 2
 
 #define PAUSE_STYLE_FULL    0
 #define PAUSE_STYLE_COMPACT 1
@@ -131,7 +133,7 @@
 #define CTRL_SRC_KEYBOARD 2
 #define CTRL_SRC_GAMEPAD  3
 
-#define SETTINGS_COUNT 7
+#define SETTINGS_COUNT 6
 
 #define C_VGA_SKY     11
 #define C_VGA_GRASS   2
@@ -142,6 +144,62 @@
 #define C_VGA_WING    15
 #define C_VGA_RED     4
 #define C_VGA_PANEL   7
+
+/* Standart Web Hex Kodlari (#RRGGBB) */
+#define WEB_HEX_BLACK   0x0C0C0Cu
+#define WEB_HEX_GRASS   0x228B22u
+#define WEB_HEX_RED     0xD22323u
+#define WEB_HEX_TRUNK   0x734420u
+#define WEB_HEX_PANEL   0xE0E8EEu
+#define WEB_HEX_LEAF    0x48C640u
+#define WEB_HEX_SKY     0x7DCDF5u
+#define WEB_HEX_YELLOW  0xFFD700u
+#define WEB_HEX_WING    0xF5FAFFu
+
+#define WEB_R(hex)      ((unsigned char)(((hex) >> 16) & 0xFFu))
+#define WEB_G(hex)      ((unsigned char)(((hex) >> 8)  & 0xFFu))
+#define WEB_B(hex)      ((unsigned char)((hex)         & 0xFFu))
+#define WEB_BGR32(hex)  ((unsigned int)WEB_B(hex) | ((unsigned int)WEB_G(hex) << 8) | ((unsigned int)WEB_R(hex) << 16))
+
+/* Tablo 1: 32-bit BGR (0x00BBGGRR) */
+static const unsigned int g_bgr32_table[16] = {
+    WEB_BGR32(WEB_HEX_BLACK),  /* 0  */
+    WEB_BGR32(WEB_HEX_SKY),    /* 1  */
+    WEB_BGR32(WEB_HEX_GRASS),  /* 2  */
+    WEB_BGR32(WEB_HEX_SKY),    /* 3  */
+    WEB_BGR32(WEB_HEX_RED),    /* 4  */
+    WEB_BGR32(WEB_HEX_SKY),    /* 5  */
+    WEB_BGR32(WEB_HEX_TRUNK),  /* 6  */
+    WEB_BGR32(WEB_HEX_PANEL),  /* 7  */
+    WEB_BGR32(WEB_HEX_SKY),    /* 8  */
+    WEB_BGR32(WEB_HEX_SKY),    /* 9  */
+    WEB_BGR32(WEB_HEX_LEAF),   /* 10 */
+    WEB_BGR32(WEB_HEX_SKY),    /* 11 */
+    WEB_BGR32(WEB_HEX_SKY),    /* 12 */
+    WEB_BGR32(WEB_HEX_SKY),    /* 13 */
+    WEB_BGR32(WEB_HEX_YELLOW), /* 14 */
+    WEB_BGR32(WEB_HEX_WING)    /* 15 */
+};
+
+/* Tablo 2: Ayri RGB bilesenleri (RGB / BMP) */
+static const unsigned char g_rgb_table[16][3] = {
+    { WEB_R(WEB_HEX_BLACK),  WEB_G(WEB_HEX_BLACK),  WEB_B(WEB_HEX_BLACK)  }, /* 0  */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 1  */
+    { WEB_R(WEB_HEX_GRASS),  WEB_G(WEB_HEX_GRASS),  WEB_B(WEB_HEX_GRASS)  }, /* 2  */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 3  */
+    { WEB_R(WEB_HEX_RED),    WEB_G(WEB_HEX_RED),    WEB_B(WEB_HEX_RED)    }, /* 4  */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 5  */
+    { WEB_R(WEB_HEX_TRUNK),  WEB_G(WEB_HEX_TRUNK),  WEB_B(WEB_HEX_TRUNK)  }, /* 6  */
+    { WEB_R(WEB_HEX_PANEL),  WEB_G(WEB_HEX_PANEL),  WEB_B(WEB_HEX_PANEL)  }, /* 7  */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 8  */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 9  */
+    { WEB_R(WEB_HEX_LEAF),   WEB_G(WEB_HEX_LEAF),   WEB_B(WEB_HEX_LEAF)   }, /* 10 */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 11 */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 12 */
+    { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 13 */
+    { WEB_R(WEB_HEX_YELLOW), WEB_G(WEB_HEX_YELLOW), WEB_B(WEB_HEX_YELLOW) }, /* 14 */
+    { WEB_R(WEB_HEX_WING),   WEB_G(WEB_HEX_WING),   WEB_B(WEB_HEX_WING)   }  /* 15 */
+};
 
 #if !BGC_DOS_TARGET && (BGC_WIN_ARCH != 16)
 typedef struct {
@@ -289,27 +347,16 @@ typedef struct {
     int settings_idx;
 
     int backend;
-    int gdi_available;
     int pause_style;
     int ctrl_speed_mode;
     int ctrl_source;
     BGC_Pad pad1;
     BGC_Pad pad2;
     BGC_Mouse mouse;
-
-#if !BGC_DOS_TARGET
-    HDC mem_dc;
-    HBITMAP mem_bmp;
-    HBITMAP old_bmp;
-    unsigned int *dib_pixels;
-#if (BGC_WIN_ARCH != 16)
-    HFONT gdi_font;
-#endif
-#endif
 } BGC_Game;
 
 /* ============================================================================
- * 1. BITMAP FONT & LOW-LEVEL PRIMITIVES
+ * 1. BITMAP FONT & VGA PRIMITIVES
  * ============================================================================ */
 
 static unsigned char g_vga_buf[SCR_W * SCR_H];
@@ -436,140 +483,24 @@ static const unsigned char *get_font_rows(char ch) {
     }
 }
 
-/* Windows BI_RGB / StretchDIBits expects 32-bit pixels in 0x00BBGGRR byte order */
 #if !BGC_DOS_TARGET
 static unsigned int vga_to_bgr_u32(unsigned char idx) {
-    switch (idx) {
-        case C_VGA_BLACK:  return 0x000C0C0Cu; /* RGB(12,12,12) */
-        case C_VGA_GRASS:  return 0x00228B22u; /* RGB(34,139,34) */
-        case C_VGA_LEAF:   return 0x0040C648u; /* RGB(72,198,64) */
-        case C_VGA_TRUNK:  return 0x00204473u; /* RGB(115,68,32) */
-        case C_VGA_SKY:    return 0x00F5CD7Du; /* RGB(125,205,245) */
-        case C_VGA_YELLOW: return 0x0000D7FFu; /* RGB(255,215,0) */
-        case C_VGA_WING:   return 0x00FFFAF5u; /* RGB(245,250,255) */
-        case C_VGA_RED:    return 0x002323D2u; /* RGB(210,35,35) */
-        case C_VGA_PANEL:  return 0x00EEE8E0u; /* RGB(224,232,238) */
-        default:           return 0x00F5CD7Du;
-    }
+    return g_bgr32_table[idx & 0x0Fu];
 }
 
 #if (BGC_WIN_ARCH == 16)
 static COLORREF vga_to_gdi_color(unsigned char idx) {
-    switch (idx) {
-        case C_VGA_BLACK:  return RGB(12, 12, 12);
-        case C_VGA_GRASS:  return RGB(34, 139, 34);
-        case C_VGA_LEAF:   return RGB(72, 198, 64);
-        case C_VGA_TRUNK:  return RGB(115, 68, 32);
-        case C_VGA_SKY:    return RGB(125, 205, 245);
-        case C_VGA_YELLOW: return RGB(255, 215, 0);
-        case C_VGA_WING:   return RGB(245, 250, 255);
-        case C_VGA_RED:    return RGB(210, 35, 35);
-        case C_VGA_PANEL:  return RGB(224, 232, 238);
-        default:           return RGB(125, 205, 245);
-    }
+    const unsigned char *rgb = g_rgb_table[idx & 0x0Fu];
+    return RGB(rgb[0], rgb[1], rgb[2]);
 }
 #endif
-
-static void init_gdi_double_buffer(BGC_Game *g, HWND hwnd) {
-    HDC screen_dc = GetDC(hwnd);
-    g->mem_dc = NULL;
-    g->mem_bmp = NULL;
-    g->old_bmp = NULL;
-    g->dib_pixels = NULL;
-#if (BGC_WIN_ARCH != 16)
-    g->gdi_font = NULL;
-#endif
-
-    if (screen_dc) {
-        g->mem_dc = CreateCompatibleDC(screen_dc);
-        if (g->mem_dc) {
-#if (BGC_WIN_ARCH != 16)
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = SCR_W;
-            bmi.bmiHeader.biHeight = -SCR_H;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-            g->mem_bmp = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, (void **)&g->dib_pixels, NULL, 0);
-            if (!g->mem_bmp) {
-                g->mem_bmp = CreateCompatibleBitmap(screen_dc, SCR_W, SCR_H);
-            }
-            if (g->mem_bmp) {
-                g->old_bmp = (HBITMAP)SelectObject(g->mem_dc, g->mem_bmp);
-            }
-            g->gdi_font = CreateFontA(
-                8, 5, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                NONANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Terminal"
-            );
-            if (!g->gdi_font) {
-                g->gdi_font = (HFONT)GetStockObject(SYSTEM_FONT);
-            }
-#else
-            g->mem_bmp = CreateCompatibleBitmap(screen_dc, SCR_W, SCR_H);
-            if (g->mem_bmp) {
-                g->old_bmp = (HBITMAP)SelectObject(g->mem_dc, g->mem_bmp);
-            }
-#endif
-        }
-        ReleaseDC(hwnd, screen_dc);
-    }
-}
-
-static void cleanup_gdi_double_buffer(BGC_Game *g) {
-#if (BGC_WIN_ARCH != 16)
-    if (g->gdi_font && g->gdi_font != (HFONT)GetStockObject(SYSTEM_FONT)) {
-        DeleteObject(g->gdi_font);
-        g->gdi_font = NULL;
-    }
-#endif
-    if (g->mem_dc) {
-        if (g->old_bmp) {
-            SelectObject(g->mem_dc, g->old_bmp);
-            g->old_bmp = NULL;
-        }
-        if (g->mem_bmp) {
-            DeleteObject(g->mem_bmp);
-            g->mem_bmp = NULL;
-        }
-        DeleteDC(g->mem_dc);
-        g->mem_dc = NULL;
-    }
-    g->dib_pixels = NULL;
-}
-
-static void present_vga_buffer_to_mem_dc(BGC_Game *g) {
-#if (BGC_WIN_ARCH != 16)
-    if (g->dib_pixels) {
-        unsigned long i;
-        unsigned int lut[16];
-        int c;
-        for (c = 0; c < 16; c++) lut[c] = vga_to_bgr_u32((unsigned char)c);
-        for (i = 0; i < SCR_PIXELS; i++) {
-            g->dib_pixels[i] = lut[g_vga_buf[i] & 0x0Fu];
-        }
-    }
-#else
-    (void)g;
-#endif
-}
 #endif
 
 static void vga_color_to_rgb(unsigned char idx, unsigned char *r, unsigned char *g, unsigned char *b) {
-    switch (idx) {
-        case C_VGA_BLACK:  *r = 12;  *g = 12;  *b = 12;  break;
-        case C_VGA_GRASS:  *r = 34;  *g = 139; *b = 34;  break;
-        case C_VGA_LEAF:   *r = 72;  *g = 198; *b = 64;  break;
-        case C_VGA_TRUNK:  *r = 115; *g = 68;  *b = 32;  break;
-        case C_VGA_SKY:    *r = 125; *g = 205; *b = 245; break;
-        case C_VGA_YELLOW: *r = 255; *g = 215; *b = 0;   break;
-        case C_VGA_WING:   *r = 245; *g = 250; *b = 255; break;
-        case C_VGA_RED:    *r = 210; *g = 35;  *b = 35;  break;
-        case C_VGA_PANEL:  *r = 224; *g = 232; *b = 238; break;
-        default:           *r = 125; *g = 205; *b = 245; break;
-    }
+    const unsigned char *rgb = g_rgb_table[idx & 0x0Fu];
+    *r = rgb[0];
+    *g = rgb[1];
+    *b = rgb[2];
 }
 
 static void draw_px(const BGC_Game *g, void *hdc_ptr, int x, int y, unsigned char vga_idx) {
@@ -936,7 +867,7 @@ static void write_obfuscated_options(const BGC_Game *g) {
 
     memset(raw, 0, sizeof(raw));
     raw[0] = 'B'; raw[1] = 'G'; raw[2] = 'C'; raw[3] = 'O';
-    raw[4] = (unsigned char)((g->backend == BACKEND_GDI) ? BACKEND_GDI : BACKEND_VGA);
+    raw[4] = (unsigned char)BACKEND_VGA;
     raw[5] = (unsigned char)((g->pause_style == PAUSE_STYLE_COMPACT) ? PAUSE_STYLE_COMPACT : PAUSE_STYLE_FULL);
     raw[6] = (unsigned char)((g->ctrl_speed_mode == CTRL_SPEED_FAST) ? CTRL_SPEED_FAST : CTRL_SPEED_NORMAL);
     raw[7] = (unsigned char)(g->mouse.follow_mode ? 1 : 0);
@@ -970,6 +901,7 @@ static void read_obfuscated_options(BGC_Game *g) {
     int i;
     FILE *fp;
 
+    g->backend = BACKEND_VGA;
     fp = fopen(OPTIONS_FILE, "rb");
     if (!fp) return;
 
@@ -994,7 +926,7 @@ static void read_obfuscated_options(BGC_Game *g) {
     calc_tag = compute_options_tag(&raw[4], 6, seed);
     if (read_tag != calc_tag) return;
 
-    if (raw[4] == BACKEND_GDI || raw[4] == BACKEND_VGA) g->backend = (int)raw[4];
+    g->backend = BACKEND_VGA;
     if (raw[5] == PAUSE_STYLE_FULL || raw[5] == PAUSE_STYLE_COMPACT) g->pause_style = (int)raw[5];
     if (raw[6] == CTRL_SPEED_NORMAL || raw[6] == CTRL_SPEED_FAST) g->ctrl_speed_mode = (int)raw[6];
     g->mouse.follow_mode = raw[7] ? 1 : 0;
@@ -2237,20 +2169,18 @@ static void activate_gameover_item(BGC_Game *g, int is_race) {
 }
 
 static void toggle_setting_item(BGC_Game *g) {
+    g->backend = BACKEND_VGA;
     if (g->settings_idx == 0) {
-        if (g->gdi_available) g->backend = (g->backend == BACKEND_GDI) ? BACKEND_VGA : BACKEND_GDI;
-        else g->backend = BACKEND_VGA;
-    } else if (g->settings_idx == 1) {
         g->pause_style = (g->pause_style == PAUSE_STYLE_FULL) ? PAUSE_STYLE_COMPACT : PAUSE_STYLE_FULL;
-    } else if (g->settings_idx == 2) {
+    } else if (g->settings_idx == 1) {
         g->ctrl_speed_mode = (g->ctrl_speed_mode == CTRL_SPEED_NORMAL) ? CTRL_SPEED_FAST : CTRL_SPEED_NORMAL;
-    } else if (g->settings_idx == 3) {
+    } else if (g->settings_idx == 2) {
         g->mouse.follow_mode = g->mouse.follow_mode ? 0 : 1;
-    } else if (g->settings_idx == 4) {
+    } else if (g->settings_idx == 3) {
         g->ctrl_source = (g->ctrl_source + 1) % 4;
-    } else if (g->settings_idx == 5) {
+    } else if (g->settings_idx == 4) {
         g->mouse.act_as_pad2 = g->mouse.act_as_pad2 ? 0 : 1;
-    } else if (g->settings_idx == 6) {
+    } else if (g->settings_idx == 5) {
         g->screen = g->prev_screen;
     }
     write_obfuscated_options(g);
@@ -2283,7 +2213,6 @@ static int point_in_box(int px, int py, int bx, int by, int bw, int bh) {
     return (px >= bx && px < bx + bw && py >= by && py < by + bh) ? 1 : 0;
 }
 
-/* Host (Player 1) controls all menus & game start; P2 only acts inside active gameplay */
 static void apply_mouse_to_game(BGC_Game *g, int *running) {
     BGC_Mouse *m = &g->mouse;
     int pause_requested = 0;
@@ -2300,7 +2229,7 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
     if (g->screen == SCREEN_MAIN_MENU) {
         int i;
         for (i = 0; i < 7; i++) {
-            int y = 42 + i * 20;
+            int y = 44 + i * 19;
             if (point_in_box(m->x, m->y, 68, y - 3, 184, 13)) {
                 g->menu_idx = i;
                 if (m->click_left) {
@@ -2367,7 +2296,6 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
         }
     } else if (g->screen == SCREEN_BEERACE) {
         if (!g->race_started) {
-            /* Only Host (P1) starts the match from the lobby */
             if (m->click_left && point_in_box(m->x, m->y, 54, 108, 212, 20)) {
                 launch_beerace_match(g);
                 return;
@@ -2394,7 +2322,6 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
             g->screen = SCREEN_PAUSED;
             return;
         }
-        /* P2 mouse control only during active race */
         if (!m->follow_mode && m->act_as_pad2 && !g->pad2.connected && mouse_allowed_in_mode(g) &&
             (m->left_down || m->x != m->prev_x || m->y != m->prev_y)) {
             int half_w = SCR_W / 2;
@@ -2431,7 +2358,7 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
     } else if (g->screen == SCREEN_SETTINGS) {
         int i;
         for (i = 0; i < SETTINGS_COUNT; i++) {
-            int y = 40 + i * 18;
+            int y = 42 + i * 20;
             if (point_in_box(m->x, m->y, 44, y - 2, 232, 12)) {
                 g->settings_idx = i;
                 if (m->click_left) {
@@ -2510,13 +2437,14 @@ static void render_main_menu(BGC_Game *g, void *hdc_ptr) {
     draw_cartoon_bee(g, hdc_ptr, 28, 40, g->tick);
     draw_black_bug(g, hdc_ptr, 292, 42, g->tick);
 
-    draw_box(g, hdc_ptr, 54, 12, 212, 174, C_VGA_PANEL, 1);
-    draw_str_5x7(g, hdc_ptr, 72, 18, "BEE GOLD COLLECTOR", C_VGA_BLACK);
+    draw_box(g, hdc_ptr, 54, 10, 212, 180, C_VGA_PANEL, 1);
+    draw_str_5x7(g, hdc_ptr, 66, 15, "BEE GOLD COLLECTOR V1.1", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 122, 23, "2026 KGAMER", C_VGA_BLACK);
     sprintf(best_line, "BEST:%d LAST:%d", g->best_score, g->last_score);
-    draw_str_5x7(g, hdc_ptr, 84, 28, best_line, C_VGA_RED);
+    draw_str_5x7(g, hdc_ptr, 84, 32, best_line, C_VGA_RED);
 
     for (i = 0; i < 7; i++) {
-        int y = 42 + i * 20;
+        int y = 44 + i * 19;
         if (g->menu_idx == i) {
             draw_box(g, hdc_ptr, 68, y - 3, 184, 13, C_VGA_YELLOW, 1);
             draw_str_5x7(g, hdc_ptr, 74, y, ">", C_VGA_BLACK);
@@ -2538,7 +2466,7 @@ static void render_beerace_lobby(const BGC_Game *g, void *hdc_ptr) {
     draw_mini_bee_race(g, hdc_ptr, half_w + 36, 78, g->tick);
 
     draw_box(g, hdc_ptr, 26, 26, 268, 146, C_VGA_PANEL, 1);
-    draw_str_5x7(g, hdc_ptr, 86, 34, "BEERACE 2P (HOST=P1)", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 66, 34, "BEERACE 2P - 2026 KGAMER", C_VGA_BLACK);
 
     draw_str_5x7(g, hdc_ptr, 38, 54, "HOST P1: MENU + START + PAD1", C_VGA_GRASS);
 
@@ -2643,7 +2571,7 @@ static void render_controls(BGC_Game *g, void *hdc_ptr) {
 }
 
 static void render_settings(BGC_Game *g, void *hdc_ptr) {
-    char l_gfx[48], l_pau[48], l_spd[48], l_flw[48], l_src[48], l_mp2[48];
+    char l_pau[48], l_spd[48], l_flw[48], l_src[48], l_mp2[48];
     const char *src_name = "AUTO";
     const char *rows[SETTINGS_COUNT];
     int i;
@@ -2652,27 +2580,25 @@ static void render_settings(BGC_Game *g, void *hdc_ptr) {
     else if (g->ctrl_source == CTRL_SRC_KEYBOARD) src_name = "KEYBRD";
     else if (g->ctrl_source == CTRL_SRC_GAMEPAD) src_name = "PAD";
 
-    sprintf(l_gfx, "GFX MODE  : %s", (g->backend == BACKEND_GDI && g->gdi_available) ? "GDI" : "VGA");
     sprintf(l_pau, "PAUSE UI  : %s", (g->pause_style == PAUSE_STYLE_COMPACT) ? "COMPACT" : "FULL");
     sprintf(l_spd, "CTRL SPEED: %s", (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? "FAST" : "NORMAL");
     sprintf(l_flw, "MSE FOLLOW: %s", g->mouse.follow_mode ? "ON" : "OFF");
     sprintf(l_src, "CTRL SRC  : %s", src_name);
     sprintf(l_mp2, "MSE AS PAD2: %s", g->mouse.act_as_pad2 ? "ON" : "OFF");
 
-    rows[0] = l_gfx;
-    rows[1] = l_pau;
-    rows[2] = l_spd;
-    rows[3] = l_flw;
-    rows[4] = l_src;
-    rows[5] = l_mp2;
-    rows[6] = "BACK (SAVED TO BGCOPT.DAT)";
+    rows[0] = l_pau;
+    rows[1] = l_spd;
+    rows[2] = l_flw;
+    rows[3] = l_src;
+    rows[4] = l_mp2;
+    rows[5] = "BACK (SAVED TO BGCOPT.DAT)";
 
     draw_viewport_env(g, hdc_ptr, 0, 0, SCR_W, SCR_H);
-    draw_box(g, hdc_ptr, 32, 18, 256, 164, C_VGA_PANEL, 1);
-    draw_str_5x7(g, hdc_ptr, 118, 24, "SETTINGS", C_VGA_BLACK);
+    draw_box(g, hdc_ptr, 32, 22, 256, 156, C_VGA_PANEL, 1);
+    draw_str_5x7(g, hdc_ptr, 118, 28, "SETTINGS", C_VGA_BLACK);
 
     for (i = 0; i < SETTINGS_COUNT; i++) {
-        int y = 40 + i * 18;
+        int y = 42 + i * 20;
         if (g->settings_idx == i) {
             draw_box(g, hdc_ptr, 44, y - 2, 232, 12, C_VGA_YELLOW, 1);
             draw_str_5x7(g, hdc_ptr, 50, y, ">", C_VGA_BLACK);
@@ -2809,10 +2735,7 @@ static void render_scene(BGC_Game *g, void *hdc_ptr) {
         draw_box(g, hdc_ptr, 7, 6, g->health, 6, (g->health > 30) ? C_VGA_GRASS : C_VGA_RED, 0);
     }
 
-    sprintf(hud, "S:%d B:%d %s",
-            g->score,
-            g->best_score,
-            (g->backend == BACKEND_GDI && g->gdi_available) ? "[GDI]" : "[VGA]");
+    sprintf(hud, "S:%d B:%d [VGA]", g->score, g->best_score);
     draw_str_5x7(g, hdc_ptr, 114, 6, hud, C_VGA_BLACK);
 
     draw_capture_banners(g, hdc_ptr);
@@ -2849,7 +2772,6 @@ static void poll_held_keyboard_win(BGC_Game *g) {
         if (p1_dx != 0 || p1_dy != 0) {
             apply_smooth_move_racer(g, &g->p1, p1_dx, p1_dy, 0);
         }
-        /* P2 keyboard only active during active race */
         if (GetAsyncKeyState('J') & 0x8000 || GetAsyncKeyState('F') & 0x8000) p2_dx -= 1;
         if (GetAsyncKeyState('L') & 0x8000 || GetAsyncKeyState('H') & 0x8000) p2_dx += 1;
         if (GetAsyncKeyState('I') & 0x8000 || GetAsyncKeyState('T') & 0x8000) p2_dy -= 1;
@@ -2869,7 +2791,6 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
     poll_single_pad(&g->pad1, 0);
     poll_single_pad(&g->pad2, 1);
 
-    /* Pad2 only works inside active gameplay; Host (Pad1) controls all menus & start */
     if (!in_active_gameplay) {
         g->pad2.dx = 0;
         g->pad2.dy = 0;
@@ -3008,7 +2929,7 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
 }
 
 /* ============================================================================
- * 10. DOS / FREEDOS (VGA MODE 13H) & WINDOWS 1.0..MT5.0/BOB (GDI + VGA)
+ * 10. DOS / FREEDOS (VGA MODE 13H) & WINDOWS 1.0..MT5.0/BOB (VGA BUFFER)
  * ============================================================================ */
 #if BGC_DOS_TARGET
 
@@ -3047,7 +2968,6 @@ int main(int argc, char **argv) {
     init_mouse_state(&game.mouse);
     dos_init_mouse_driver(&game.mouse);
     strcpy(game.peer_ip, "192.168.1.16");
-    game.gdi_available = 0;
     game.backend = BACKEND_VGA;
     game.pause_style = PAUSE_STYLE_FULL;
     game.ctrl_speed_mode = CTRL_SPEED_FAST;
@@ -3199,19 +3119,15 @@ int main(int argc, char **argv) {
 
 static BGC_Game g_win;
 
-static void detect_backend(BGC_Game *g, const char *cmd) {
-    HDC dc = GetDC(NULL);
-    g->gdi_available = (dc != NULL) ? 1 : 0;
-    if (dc) ReleaseDC(NULL, dc);
-
-    g->backend = g->gdi_available ? BACKEND_GDI : BACKEND_VGA;
+static void init_vga_mode(BGC_Game *g, const char *cmd) {
+    (void)cmd;
+    g->backend = BACKEND_VGA;
+    read_obfuscated_options(g);
+    g->backend = BACKEND_VGA;
     if (cmd && cmd[0] != '\0') {
-        if (strstr(cmd, "--vga") != NULL) g->backend = BACKEND_VGA;
-        else if (strstr(cmd, "--gdi") != NULL && g->gdi_available) g->backend = BACKEND_GDI;
         if (strstr(cmd, "--mouse-pad2-off") != NULL) g->mouse.act_as_pad2 = 0;
         else if (strstr(cmd, "--mouse-pad2") != NULL) g->mouse.act_as_pad2 = 1;
     }
-    read_obfuscated_options(g);
 }
 
 static void blit_vga_buffer_to_gdi(HDC hdc, const RECT *rc) {
@@ -3223,11 +3139,8 @@ static void blit_vga_buffer_to_gdi(HDC hdc, const RECT *rc) {
     {
         BITMAPINFO bmi;
         unsigned int pixels[SCR_W * SCR_H];
-        unsigned int lut[16];
         unsigned long i;
-        int c;
-        for (c = 0; c < 16; c++) lut[c] = vga_to_bgr_u32((unsigned char)c);
-        for (i = 0; i < SCR_PIXELS; i++) pixels[i] = lut[g_vga_buf[i] & 0x0Fu];
+        for (i = 0; i < SCR_PIXELS; i++) pixels[i] = vga_to_bgr_u32(g_vga_buf[i]);
 
         memset(&bmi, 0, sizeof(bmi));
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -3275,7 +3188,6 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             {
                 int i;
                 srand((unsigned int)time(NULL));
-                init_gdi_double_buffer(&g_win, hwnd);
                 for (i = 0; i < MAX_GOLDS; i++) spawn_single_gold_slot(&g_win, i);
                 for (i = 0; i < MAX_BUGS;  i++) spawn_single_bug_slot(&g_win, i);
                 spawn_single_gold_bar(&g_win);
@@ -3324,11 +3236,6 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             step_world(&g_win);
             memset(g_vga_buf, C_VGA_SKY, sizeof(g_vga_buf));
             render_scene(&g_win, NULL);
-#if (BGC_WIN_ARCH != 16)
-            if (g_win.backend == BACKEND_GDI && g_win.gdi_available && g_win.mem_dc && g_win.dib_pixels) {
-                present_vga_buffer_to_mem_dc(&g_win);
-            }
-#endif
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
 
@@ -3440,18 +3347,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_PAINT:
             hdc = BeginPaint(hwnd, &ps);
             GetClientRect(hwnd, &rc);
-#if (BGC_WIN_ARCH != 16)
-            if (g_win.backend == BACKEND_GDI && g_win.gdi_available && g_win.mem_dc && g_win.dib_pixels) {
-                int cw = rc.right - rc.left;
-                int ch = rc.bottom - rc.top;
-                if (cw > 0 && ch > 0) {
-                    StretchBlt(hdc, 0, 0, cw, ch, g_win.mem_dc, 0, 0, SCR_W, SCR_H, SRCCOPY);
-                }
-            } else
-#endif
-            {
-                blit_vga_buffer_to_gdi(hdc, &rc);
-            }
+            blit_vga_buffer_to_gdi(hdc, &rc);
             EndPaint(hwnd, &ps);
             return 0;
 
@@ -3460,7 +3356,6 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             write_obfuscated_options(&g_win);
             apply_rumble_and_dualsense(0, 0, 0, 0, 0);
             if (g_win.video_recording) save_video_to_file(&g_win);
-            cleanup_gdi_double_buffer(&g_win);
             free_media_buffers(&g_win);
             PostQuitMessage(0);
             return 0;
@@ -3489,7 +3384,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     g_win.ctrl_speed_mode = CTRL_SPEED_FAST;
     g_win.ctrl_source = CTRL_SRC_AUTO;
     read_obfuscated_vault(&g_win);
-    detect_backend(&g_win, lpCmd);
+    init_vga_mode(&g_win, lpCmd);
 
     wc.style         = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc   = BGC_WndProc;
@@ -3522,7 +3417,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     }
     write_obfuscated_options(&g_win);
     apply_rumble_and_dualsense(0, 0, 0, 0, 0);
-    cleanup_gdi_double_buffer(&g_win);
     free_media_buffers(&g_win);
     return (int)msg.wParam;
 }
