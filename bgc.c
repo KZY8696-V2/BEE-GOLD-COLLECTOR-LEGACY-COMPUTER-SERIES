@@ -5,7 +5,8 @@
  * + DOUBLE-BUFFERED GDI (CreateCompatibleDC/Bitmap/BitBlt) + GDI FONT
  * + RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR
  * + UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN + SAVE TO DEVICE)
- * + SINGLE-FILE AUTO-ADAPTATION FOR MS-DOS, FREEDOS, WIN16, WIN9X/2000/XP & WIN32/64
+ * + SINGLE-FILE AUTO-ADAPTATION FOR DOS/FREEDOS (DJGPP & WATCOM), WIN16,
+ *   WIN9X/2000/XP & WIN32/64
  * ============================================================================ */
 
 #include <stdio.h>
@@ -13,14 +14,25 @@
 #include <string.h>
 #include <time.h>
 
-#if defined(__MSDOS__) || defined(_MSDOS) || defined(__DOS__)
+#if defined(__DJGPP__)
     #define BGC_DOS_TARGET 1
+    #define BGC_DJGPP_TARGET 1
+    #define BGC_HAS_SOCKETS 0
+    #include <dos.h>
+    #include <conio.h>
+    #include <dpmi.h>
+    #include <sys/movedata.h>
+    #include <sys/nearptr.h>
+#elif defined(__MSDOS__) || defined(_MSDOS) || defined(__DOS__)
+    #define BGC_DOS_TARGET 1
+    #define BGC_DJGPP_TARGET 0
     #define BGC_HAS_SOCKETS 0
     #include <dos.h>
     #include <conio.h>
     #include <malloc.h>
 #else
     #define BGC_DOS_TARGET 0
+    #define BGC_DJGPP_TARGET 0
     #if !defined(_WIN16) && !defined(__WINDOWS_386__) && !defined(_M_I86)
         #include <winsock2.h>
         #include <ws2tcpip.h>
@@ -192,7 +204,6 @@ typedef struct {
     int peer_best_score;
     int wifi_status;
 
-    /* Unified Media Vault state (PHOTO / REPLAY / VIDEO) */
     int media_tab;
 
     int replay_recording;
@@ -214,7 +225,6 @@ typedef struct {
     int video_saved_banner_ticks;
     int replay_saved_banner_ticks;
 
-    /* Rumble & DualSense LED/Haptic state */
     int rumble_ticks;
     unsigned short rumble_left;
     unsigned short rumble_right;
@@ -246,10 +256,38 @@ typedef struct {
 } BGC_Game;
 
 /* ============================================================================
- * 1. BITMAP FONT & LOW-LEVEL PRIMITIVES (DOUBLE-BUFFERED GDI + VGA + MIRROR)
+ * 1. BITMAP FONT & LOW-LEVEL PRIMITIVES
  * ============================================================================ */
 
 static unsigned char g_vga_buf[SCR_W * SCR_H];
+
+#if BGC_DJGPP_TARGET
+static int g_djgpp_nearptr_ready = 0;
+
+static void bgc_dos_init_vram(void) {
+    if (!g_djgpp_nearptr_ready) {
+        if (__djgpp_nearptr_enable()) {
+            g_djgpp_nearptr_ready = 1;
+        }
+    }
+}
+
+static void bgc_dos_shutdown_vram(void) {
+    if (g_djgpp_nearptr_ready) {
+        __djgpp_nearptr_disable();
+        g_djgpp_nearptr_ready = 0;
+    }
+}
+
+static void bgc_dos_flush_vga(void) {
+    if (g_djgpp_nearptr_ready) {
+        unsigned char *vram = (unsigned char *)(0xA0000 + __djgpp_conventional_base);
+        memcpy(vram, g_vga_buf, (size_t)SCR_PIXELS);
+    } else {
+        dosmemput(g_vga_buf, (size_t)SCR_PIXELS, 0xA0000L);
+    }
+}
+#endif
 
 static void alloc_media_buffers(BGC_Game *g) {
     int i;
@@ -430,7 +468,7 @@ static void vga_color_to_rgb(unsigned char idx, unsigned char *r, unsigned char 
 static void raw_put_pixel(int x, int y, unsigned char vga_idx) {
     if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
     g_vga_buf[(unsigned long)y * SCR_W + (unsigned long)x] = vga_idx;
-#if BGC_DOS_TARGET
+#if BGC_DOS_TARGET && !BGC_DJGPP_TARGET
     {
         unsigned char far *vram = (unsigned char far *)0xA0000000L;
         vram[(unsigned long)y * SCR_W + (unsigned long)x] = vga_idx;
@@ -1161,65 +1199,91 @@ static void update_pad_edges(BGC_Pad *pad, int c_conf, int c_back, int c_pause, 
 #if BGC_DOS_TARGET
 
 static void poll_single_pad(BGC_Pad *pad, int slot_idx) {
-    union REGS r_in, r_out;
-    unsigned int jx, jy;
-    unsigned char buttons_mask;
-    unsigned int carry_flag;
+    unsigned int jx = 0, jy = 0;
+    unsigned char buttons_mask = 0;
     (void)slot_idx;
 
     pad->dx = 0;
     pad->dy = 0;
 
-#if defined(__386__)
-    memset(&r_in, 0, sizeof(r_in));
-    r_in.h.ah = 0x84;
-    r_in.w.dx = 0x0000;
-    int386(0x15, &r_in, &r_out);
-    carry_flag = r_out.x.cflag & 1u;
-    if (carry_flag) {
-        pad->connected = 0;
-        update_pad_edges(pad, 0, 0, 0, 0);
-        return;
-    }
-    buttons_mask = (unsigned char)((~r_out.h.al) >> 4) & 0x0Fu;
+#if BGC_DJGPP_TARGET
+    {
+        __dpmi_regs r;
+        memset(&r, 0, sizeof(r));
+        r.h.ah = 0x84;
+        r.x.dx = 0x0000;
+        __dpmi_int(0x15, &r);
+        if (r.x.flags & 1u) {
+            pad->connected = 0;
+            update_pad_edges(pad, 0, 0, 0, 0);
+            return;
+        }
+        buttons_mask = (unsigned char)((~r.h.al) >> 4) & 0x0Fu;
 
-    memset(&r_in, 0, sizeof(r_in));
-    r_in.h.ah = 0x84;
-    r_in.w.dx = 0x0001;
-    int386(0x15, &r_in, &r_out);
-    carry_flag = r_out.x.cflag & 1u;
-    if (carry_flag || r_out.w.ax == 0 || r_out.w.bx == 0) {
-        pad->connected = 0;
-        update_pad_edges(pad, 0, 0, 0, 0);
-        return;
+        memset(&r, 0, sizeof(r));
+        r.h.ah = 0x84;
+        r.x.dx = 0x0001;
+        __dpmi_int(0x15, &r);
+        if ((r.x.flags & 1u) || r.x.ax == 0 || r.x.bx == 0) {
+            pad->connected = 0;
+            update_pad_edges(pad, 0, 0, 0, 0);
+            return;
+        }
+        jx = (unsigned int)r.x.ax;
+        jy = (unsigned int)r.x.bx;
     }
-    jx = (unsigned int)r_out.w.ax;
-    jy = (unsigned int)r_out.w.bx;
+#elif defined(__386__)
+    {
+        union REGS r_in, r_out;
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.h.ah = 0x84;
+        r_in.w.dx = 0x0000;
+        int386(0x15, &r_in, &r_out);
+        if (r_out.x.cflag & 1u) {
+            pad->connected = 0;
+            update_pad_edges(pad, 0, 0, 0, 0);
+            return;
+        }
+        buttons_mask = (unsigned char)((~r_out.h.al) >> 4) & 0x0Fu;
+
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.h.ah = 0x84;
+        r_in.w.dx = 0x0001;
+        int386(0x15, &r_in, &r_out);
+        if ((r_out.x.cflag & 1u) || r_out.w.ax == 0 || r_out.w.bx == 0) {
+            pad->connected = 0;
+            update_pad_edges(pad, 0, 0, 0, 0);
+            return;
+        }
+        jx = (unsigned int)r_out.w.ax;
+        jy = (unsigned int)r_out.w.bx;
+    }
 #else
-    memset(&r_in, 0, sizeof(r_in));
-    r_in.h.ah = 0x84;
-    r_in.x.dx = 0x0000;
-    int86(0x15, &r_in, &r_out);
-    carry_flag = r_out.x.cflag & 1u;
-    if (carry_flag) {
-        pad->connected = 0;
-        update_pad_edges(pad, 0, 0, 0, 0);
-        return;
-    }
-    buttons_mask = (unsigned char)((~r_out.h.al) >> 4) & 0x0Fu;
+    {
+        union REGS r_in, r_out;
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.h.ah = 0x84;
+        r_in.x.dx = 0x0000;
+        int86(0x15, &r_in, &r_out);
+        if (r_out.x.cflag & 1u) {
+            pad->connected = 0;
+            update_pad_edges(pad, 0, 0, 0, 0);
+            return;
+        }
+        buttons_mask = (unsigned char)((~r_out.h.al) >> 4) & 0x0Fu;
 
-    memset(&r_in, 0, sizeof(r_in));
-    r_in.h.ah = 0x84;
-    r_in.x.dx = 0x0001;
-    int86(0x15, &r_in, &r_out);
-    carry_flag = r_out.x.cflag & 1u;
-    if (carry_flag || r_out.x.ax == 0 || r_out.x.bx == 0) {
-        pad->connected = 0;
-        update_pad_edges(pad, 0, 0, 0, 0);
-        return;
+        memset(&r_in, 0, sizeof(r_in));
+        r_in.h.ah = 0x84;
+        r_in.x.dx = 0x0001;
+        int86(0x15, &r_in, &r_out);
+        if ((r_out.x.cflag & 1u) || r_out.x.ax == 0 || r_out.x.bx == 0) {
+            pad->connected = 0;
+            update_pad_edges(pad, 0, 0, 0, 0);
+            return;
+        }
+        jx = (unsigned int)r_out.x.ax;
+        jy = (unsigned int)r_out.x.bx;
     }
-    jx = (unsigned int)r_out.x.ax;
-    jy = (unsigned int)r_out.x.bx;
 #endif
 
     pad->connected = 1;
@@ -2031,13 +2095,23 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
 #if BGC_DOS_TARGET
 
 static void dos_set_video(unsigned char mode) {
+#if BGC_DJGPP_TARGET
+    __dpmi_regs r;
+    memset(&r, 0, sizeof(r));
+    r.h.ah = 0x00;
+    r.h.al = mode;
+    __dpmi_int(0x10, &r);
+#elif defined(__386__)
     union REGS r;
     memset(&r, 0, sizeof(r));
     r.h.ah = 0x00;
     r.h.al = mode;
-#if defined(__386__)
     int386(0x10, &r, &r);
 #else
+    union REGS r;
+    memset(&r, 0, sizeof(r));
+    r.h.ah = 0x00;
+    r.h.al = mode;
     int86(0x10, &r, &r);
 #endif
 }
@@ -2060,6 +2134,9 @@ int main(int argc, char **argv) {
     spawn_single_gold(&game);
     spawn_single_bug(&game);
 
+#if BGC_DJGPP_TARGET
+    bgc_dos_init_vram();
+#endif
     dos_set_video(0x13);
 
     while (running) {
@@ -2142,11 +2219,17 @@ int main(int argc, char **argv) {
         poll_dual_pads_and_apply(&game, &running);
         step_world(&game);
         render_scene(&game, NULL);
+#if BGC_DJGPP_TARGET
+        bgc_dos_flush_vga();
+#endif
         delay(40);
     }
 
     if (game.video_recording) save_video_to_file(&game);
     free_media_buffers(&game);
+#if BGC_DJGPP_TARGET
+    bgc_dos_shutdown_vram();
+#endif
     dos_set_video(0x03);
     printf("%s - BEST: %d\n", BGC_TITLE, game.best_score);
     return 0;
