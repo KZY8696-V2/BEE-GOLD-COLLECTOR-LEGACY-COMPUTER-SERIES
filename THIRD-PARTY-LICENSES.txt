@@ -1,0 +1,33 @@
+================================================================================
+THIRD-PARTY COMPONENTS & LICENSES
+================================================================================
+
+This distribution package includes third-party software required for running
+certain builds (such as 32-bit MS-DOS / DJGPP protected-mode execution).
+The project's own source code remains licensed under the MIT License (see
+LICENSE in the root directory) unless stated otherwise.
+
+--------------------------------------------------------------------------------
+1. CWSDPMI (CWSDPMI.EXE)
+--------------------------------------------------------------------------------
+Component : CWSDPMI (CW Stub DPMI Server)
+Author    : Charles W. Sandmann and contributors
+License   : GNU General Public License version 2 (GPL v2)
+
+Notes:
+- CWSDPMI.EXE is distributed as a standalone DPMI host executable for 32-bit
+  DOS protected-mode programs.
+- Including CWSDPMI.EXE in this package does not change the license of the
+  application's own source code, which is distributed under the MIT License.
+- CWSDPMI.EXE is subject to the terms and conditions of the GNU General Public
+  License, version 2.
+- If you redistribute or modify CWSDPMI, you must comply with the GPL v2
+  requirements (including preserving copyright/license notices and making
+  corresponding source code available as required by GPL v2).
+- Original CWSDPMI information and source code can be obtained from DJGPP /
+  FreeDOS distributions and the CWSDPMI project archive (e.g., Charles W.
+  Sandmann's CWSDPMI releases).
+
+A copy of the GNU General Public License v2 should accompany CWSDPMI
+distributions (see https://www.gnu.org/licenses/old-licenses/gpl-2.0.html).
+================================================================================
