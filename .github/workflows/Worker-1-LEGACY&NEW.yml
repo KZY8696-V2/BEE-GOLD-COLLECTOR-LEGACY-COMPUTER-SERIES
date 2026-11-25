@@ -1,0 +1,108 @@
+name: Build DOS (DJGPP) & 9x + All NT (Visual Studio)
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  build-dos-djgpp:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare dist directory
+        run: mkdir -p dist
+
+      - name: Install DJGPP toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential p7zip-full curl
+          if command -v i586-pc-msdosdjgpp-gcc >/dev/null 2>&1; then
+            echo "DJGPP_CC=i586-pc-msdosdjgpp-gcc" >> "$GITHUB_ENV"
+          elif command -v i686-pc-msdosdjgpp-gcc >/dev/null 2>&1; then
+            echo "DJGPP_CC=i686-pc-msdosdjgpp-gcc" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y djgpp-gcc || true
+            if command -v djgpp-gcc >/dev/null 2>&1; then
+              echo "DJGPP_CC=djgpp-gcc" >> "$GITHUB_ENV"
+            else
+              echo "DJGPP compiler not found in apt."
+              exit 1
+            fi
+          fi
+
+      - name: Build DOS / FreeDOS (bgc_freedos.exe)
+        run: |
+          "${DJGPP_CC}" -O2 -D_CRT_SECURE_NO_WARNINGS -DBGC_VAULT_KEY=0x13572468u bgc.c -o dist/bgc_freedos.exe
+          ls -lh dist/bgc_freedos.exe
+
+      - name: Upload DOS / FreeDOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dos-freedos-djgpp
+          path: dist/*
+
+  build-9x-and-nt-vs:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare dist directory
+        run: if not exist dist mkdir dist
+
+      - name: Build Windows 9x (95 / 98 / ME) with VS
+        run: |
+          set "VSDIR="
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo Visual Studio C++ tools not found via vswhere.
+            exit /b 1
+          )
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          echo Active WindowsSDKVersion=%WindowsSDKVersion%
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0400 /D_WIN32_WINDOWS=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win95_98.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0490 /D_WIN32_WINDOWS=0x0490 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_winme.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+
+      - name: Build All NT-Based Targets (NT 4.0 -> 2000 / XP / Vista / 7 / 8 / 8.1 / 10-11) with VS
+        run: |
+          set "VSDIR="
+          for /f "tokens=*" %%I in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSDIR=%%I"
+          if not defined VSDIR (
+            echo Visual Studio C++ tools not found via vswhere.
+            exit /b 1
+          )
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          echo Active WindowsSDKVersion=%WindowsSDKVersion%
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0400 /D_WIN32_WINNT=0x0400 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_nt40_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0500 /D_WIN32_WINNT=0x0500 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win2000_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0501 /D_WIN32_WINNT=0x0501 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_11_x86.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+
+          call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0502 /D_WIN32_WINNT=0x0502 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_xp_2003_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0600 /D_WIN32_WINNT=0x0600 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_vista_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win7_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0602 /D_WIN32_WINNT=0x0602 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win8_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0603 /D_WIN32_WINNT=0x0603 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win81_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          cl /nologo /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /FIwinsock2.h /DWINVER=0x0A00 /D_WIN32_WINNT=0x0A00 /DBGC_VAULT_KEY=0x13572468u bgc.c /Fe:dist\bgc_win10_11_x64.exe /link gdi32.lib winmm.lib user32.lib ws2_32.lib || exit /b 1
+          dir dist\*.exe
+
+      - name: Upload Windows 9x & NT VS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-9x-nt-vs
+          path: dist/*
