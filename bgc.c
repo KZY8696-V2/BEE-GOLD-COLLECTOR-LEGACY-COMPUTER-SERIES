@@ -8,6 +8,7 @@
  * + MULTI-GOLD, MULTI-BUG & GOLD BAR COLLECTIBLE
  * + HOLD + TAP SMOOTH ASCENT & FULL MAIN MENU GAMEPAD SUPPORT
  * + NO PASSIVE HEALTH DRAIN (HEALTH CHANGES ONLY ON GOLD / BAR / BUG)
+ * + GAME OVER AT PAUSE POSITION WITH RETRY & MAIN MENU BUTTONS
  * + SINGLE-FILE AUTO-ADAPTATION FOR DOS/FREEDOS (DJGPP & WATCOM), WIN16,
  *   WIN9X/2000/XP & WIN32/64
  * ============================================================================ */
@@ -209,6 +210,7 @@ typedef struct {
     int last_score;
     int health;
     int game_over;
+    int gameover_idx;
     long tick;
 
     Racer p1;
@@ -1441,6 +1443,7 @@ static void start_single_game(BGC_Game *g) {
     g->score = 0;
     g->health = 100;
     g->game_over = 0;
+    g->gameover_idx = 0;
     g->tick = 0;
     g->replay_recording = 1;
     g->replay_count = 0;
@@ -1497,6 +1500,7 @@ static void start_beerace(BGC_Game *g) {
     init_racer(&g->p2, half_w, SCR_H, 19);
     g->race_over = 0;
     g->race_winner = 0;
+    g->gameover_idx = 0;
     g->regen_timer_ticks = 0;
     g->tick = 0;
     g->pause_idx = 0;
@@ -1655,14 +1659,17 @@ static void step_beerace(BGC_Game *g) {
     if (g->p1.dead && !g->p2.dead) {
         g->race_over = 1;
         g->race_winner = 2;
+        g->gameover_idx = 0;
         record_score_secure(g, g->p2.score);
     } else if (g->p2.dead && !g->p1.dead) {
         g->race_over = 1;
         g->race_winner = 1;
+        g->gameover_idx = 0;
         record_score_secure(g, g->p1.score);
     } else if (g->p1.dead && g->p2.dead) {
         g->race_over = 1;
         g->race_winner = (g->p1.score >= g->p2.score) ? 1 : 2;
+        g->gameover_idx = 0;
         record_score_secure(g, (g->p1.score >= g->p2.score) ? g->p1.score : g->p2.score);
     }
 }
@@ -1715,6 +1722,7 @@ static void step_single_game(BGC_Game *g) {
             if (g->health <= 0) {
                 g->health = 0;
                 g->game_over = 1;
+                g->gameover_idx = 0;
                 g->replay_recording = 0;
                 save_replay_to_file(g);
                 record_score_secure(g, g->score);
@@ -1810,6 +1818,20 @@ static void activate_pause_item(BGC_Game *g) {
     }
 }
 
+static void activate_gameover_item(BGC_Game *g, int is_race) {
+    if (g->gameover_idx == 0) {
+        if (is_race) start_beerace(g);
+        else start_single_game(g);
+    } else if (g->gameover_idx == 1) {
+        g->menu_idx = 0;
+        g->game_over = 0;
+        g->race_over = 0;
+        g->screen = SCREEN_MAIN_MENU;
+    } else if (g->gameover_idx == 2) {
+        g->pause_style = (g->pause_style == PAUSE_STYLE_FULL) ? PAUSE_STYLE_COMPACT : PAUSE_STYLE_FULL;
+    }
+}
+
 static void toggle_setting_item(BGC_Game *g) {
     if (g->settings_idx == 0) {
         if (g->gdi_available) g->backend = (g->backend == BACKEND_GDI) ? BACKEND_VGA : BACKEND_GDI;
@@ -1863,6 +1885,30 @@ static void draw_capture_banners(const BGC_Game *g, void *hdc_ptr) {
     if (g->replay_saved_banner_ticks > 0) {
         draw_box(g, hdc_ptr, 214, 40, 100, 11, C_VGA_PANEL, 1);
         draw_str_5x7(g, hdc_ptr, 219, 42, "RPL SAVED", C_VGA_BLACK);
+    }
+}
+
+static void render_gameover_at_pause_pos(const BGC_Game *g, void *hdc_ptr, const char *header_txt) {
+    const char *items[3];
+    char style_line[32];
+    int bx = 58, by = 42, bw = 204, bh = 114;
+    int i;
+
+    sprintf(style_line, "STYLE: %s", (g->pause_style == PAUSE_STYLE_COMPACT) ? "COMPACT" : "FULL");
+    items[0] = "RETRY GAME";
+    items[1] = "MAIN MENU";
+    items[2] = style_line;
+
+    draw_box(g, hdc_ptr, bx, by, bw, bh, C_VGA_PANEL, 1);
+    draw_str_5x7(g, hdc_ptr, bx + 14, by + 8, header_txt, C_VGA_RED);
+
+    for (i = 0; i < 3; i++) {
+        int y = by + 30 + i * 22;
+        if (g->gameover_idx == i) {
+            draw_box(g, hdc_ptr, bx + 10, y - 3, bw - 20, 14, C_VGA_YELLOW, 1);
+            draw_str_5x7(g, hdc_ptr, bx + 15, y, ">", C_VGA_BLACK);
+        }
+        draw_str_5x7(g, hdc_ptr, bx + 26, y, items[i], C_VGA_BLACK);
     }
 }
 
@@ -2069,11 +2115,9 @@ static void render_beerace_split(BGC_Game *g, void *hdc_ptr) {
     draw_box(g, hdc_ptr, half_w - 1, 0, 2, SCR_H, C_VGA_BLACK, 0);
 
     if (g->race_over) {
-        char win_txt[48];
-        draw_box(g, hdc_ptr, 54, 72, 212, 48, C_VGA_PANEL, 1);
-        sprintf(win_txt, "P%d WINS FIRST DEATH OUT", g->race_winner);
-        draw_str_5x7(g, hdc_ptr, 64, 82, win_txt, C_VGA_RED);
-        draw_str_5x7(g, hdc_ptr, 72, 98, "PRESS R RETRY OR M MENU", C_VGA_BLACK);
+        char win_txt[32];
+        sprintf(win_txt, "P%d WINS", g->race_winner);
+        render_gameover_at_pause_pos(g, hdc_ptr, win_txt);
     }
     draw_capture_banners(g, hdc_ptr);
 }
@@ -2137,9 +2181,7 @@ static void render_scene(BGC_Game *g, void *hdc_ptr) {
     if (g->screen == SCREEN_PAUSED) {
         render_pause(g, hdc_ptr);
     } else if (g->game_over) {
-        draw_box(g, hdc_ptr, 52, 74, 216, 42, C_VGA_PANEL, 1);
-        draw_str_5x7(g, hdc_ptr, 118, 80, "GAME OVER", C_VGA_RED);
-        draw_str_5x7(g, hdc_ptr, 66, 94, "PRESS R RETRY OR M MENU", C_VGA_BLACK);
+        render_gameover_at_pause_pos(g, hdc_ptr, "GAME OVER");
     }
 
     capture_video_frame(g);
@@ -2155,7 +2197,7 @@ static void poll_held_keyboard_win(BGC_Game *g) {
     if (GetAsyncKeyState(VK_UP)    & 0x8000) p1_dy -= 1;
     if (GetAsyncKeyState(VK_DOWN)  & 0x8000) p1_dy += 1;
 
-    if (g->screen == SCREEN_PLAYING) {
+    if (g->screen == SCREEN_PLAYING && !g->game_over) {
         if (GetAsyncKeyState('A') & 0x8000) p1_dx -= 1;
         if (GetAsyncKeyState('D') & 0x8000) p1_dx += 1;
         if (GetAsyncKeyState('W') & 0x8000) p1_dy -= 1;
@@ -2163,7 +2205,7 @@ static void poll_held_keyboard_win(BGC_Game *g) {
         if (p1_dx != 0 || p1_dy != 0) {
             apply_smooth_move_single(g, p1_dx, p1_dy, 0);
         }
-    } else if (g->screen == SCREEN_BEERACE) {
+    } else if (g->screen == SCREEN_BEERACE && !g->race_over) {
         if (p1_dx != 0 || p1_dy != 0) {
             apply_smooth_move_racer(g, &g->p1, p1_dx, p1_dy, 0);
         }
@@ -2206,6 +2248,21 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
         if (g->pad1.btn_retry || g->pad2.btn_retry) save_current_media_to_device(g);
         if (g->pad1.btn_back || g->pad2.btn_back) g->screen = SCREEN_MAIN_MENU;
     } else if (g->screen == SCREEN_PLAYING) {
+        if (g->game_over) {
+            if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
+                if (pad_dir_y < 0) g->gameover_idx = (g->gameover_idx + 2) % 3;
+                else if (pad_dir_y > 0) g->gameover_idx = (g->gameover_idx + 1) % 3;
+                g->pad1.nav_cooldown = 7;
+            }
+            if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_gameover_item(g, 0);
+            if (g->pad1.btn_retry || g->pad2.btn_retry) start_single_game(g);
+            if (g->pad1.btn_back || g->pad2.btn_back) {
+                g->menu_idx = 0;
+                g->game_over = 0;
+                g->screen = SCREEN_MAIN_MENU;
+            }
+            return;
+        }
         if (pad_dir_x != 0 || pad_dir_y != 0) {
             apply_smooth_move_single(g, pad_dir_x, pad_dir_y, 0);
         }
@@ -2214,10 +2271,22 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
             g->pause_idx = 0;
             g->screen = SCREEN_PAUSED;
         }
-        if (g->game_over && (g->pad1.btn_retry || g->pad2.btn_retry || g->pad1.btn_confirm || g->pad2.btn_confirm)) {
-            start_single_game(g);
-        }
     } else if (g->screen == SCREEN_BEERACE) {
+        if (g->race_over) {
+            if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
+                if (pad_dir_y < 0) g->gameover_idx = (g->gameover_idx + 2) % 3;
+                else if (pad_dir_y > 0) g->gameover_idx = (g->gameover_idx + 1) % 3;
+                g->pad1.nav_cooldown = 7;
+            }
+            if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_gameover_item(g, 1);
+            if (g->pad1.btn_retry || g->pad2.btn_retry) start_beerace(g);
+            if (g->pad1.btn_back || g->pad2.btn_back) {
+                g->menu_idx = 0;
+                g->race_over = 0;
+                g->screen = SCREEN_MAIN_MENU;
+            }
+            return;
+        }
         if (g->pad1.dx != 0 || g->pad1.dy != 0) {
             apply_smooth_move_racer(g, &g->p1, g->pad1.dx, g->pad1.dy, 0);
         }
@@ -2228,9 +2297,6 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
             g->prev_screen = SCREEN_BEERACE;
             g->pause_idx = 0;
             g->screen = SCREEN_PAUSED;
-        }
-        if (g->race_over && (g->pad1.btn_retry || g->pad2.btn_retry || g->pad1.btn_confirm || g->pad2.btn_confirm)) {
-            start_beerace(g);
         }
     } else if (g->screen == SCREEN_PAUSED) {
         if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
@@ -2337,15 +2403,27 @@ int main(int argc, char **argv) {
                     if (ext == 80) game.settings_idx = (game.settings_idx + 1) % 5;
                     if (ext == 75 || ext == 77) toggle_setting_item(&game);
                 } else if (game.screen == SCREEN_PLAYING) {
-                    if (ext == 75) apply_smooth_move_single(&game, -1, 0, 1);
-                    if (ext == 77) apply_smooth_move_single(&game,  1, 0, 1);
-                    if (ext == 72) apply_smooth_move_single(&game, 0, -1, 1);
-                    if (ext == 80) apply_smooth_move_single(&game, 0,  1, 1);
+                    if (game.game_over) {
+                        if (ext == 72) game.gameover_idx = (game.gameover_idx + 2) % 3;
+                        if (ext == 80) game.gameover_idx = (game.gameover_idx + 1) % 3;
+                        if (ext == 75 || ext == 77) activate_gameover_item(&game, 0);
+                    } else {
+                        if (ext == 75) apply_smooth_move_single(&game, -1, 0, 1);
+                        if (ext == 77) apply_smooth_move_single(&game,  1, 0, 1);
+                        if (ext == 72) apply_smooth_move_single(&game, 0, -1, 1);
+                        if (ext == 80) apply_smooth_move_single(&game, 0,  1, 1);
+                    }
                 } else if (game.screen == SCREEN_BEERACE) {
-                    if (ext == 75) apply_smooth_move_racer(&game, &game.p1, -1, 0, 1);
-                    if (ext == 77) apply_smooth_move_racer(&game, &game.p1,  1, 0, 1);
-                    if (ext == 72) apply_smooth_move_racer(&game, &game.p1, 0, -1, 1);
-                    if (ext == 80) apply_smooth_move_racer(&game, &game.p1, 0,  1, 1);
+                    if (game.race_over) {
+                        if (ext == 72) game.gameover_idx = (game.gameover_idx + 2) % 3;
+                        if (ext == 80) game.gameover_idx = (game.gameover_idx + 1) % 3;
+                        if (ext == 75 || ext == 77) activate_gameover_item(&game, 1);
+                    } else {
+                        if (ext == 75) apply_smooth_move_racer(&game, &game.p1, -1, 0, 1);
+                        if (ext == 77) apply_smooth_move_racer(&game, &game.p1,  1, 0, 1);
+                        if (ext == 72) apply_smooth_move_racer(&game, &game.p1, 0, -1, 1);
+                        if (ext == 80) apply_smooth_move_racer(&game, &game.p1, 0,  1, 1);
+                    }
                 }
             } else {
                 if (ch == 'v' || ch == 'V') {
@@ -2361,27 +2439,37 @@ int main(int argc, char **argv) {
                     if (ch == 13) activate_main_item(&game, &running);
                     else if (ch == 27) running = 0;
                 } else if (game.screen == SCREEN_PLAYING) {
-                    if (ch == 'a' || ch == 'A') apply_smooth_move_single(&game, -1, 0, 1);
-                    if (ch == 'd' || ch == 'D') apply_smooth_move_single(&game,  1, 0, 1);
-                    if (ch == 'w' || ch == 'W') apply_smooth_move_single(&game, 0, -1, 1);
-                    if (ch == 's' || ch == 'S') apply_smooth_move_single(&game, 0,  1, 1);
-                    if (ch == 'p' || ch == 'P' || ch == 27) {
-                        game.prev_screen = SCREEN_PLAYING;
-                        game.pause_idx = 0;
-                        game.screen = SCREEN_PAUSED;
-                    } else if (game.game_over && (ch == 'r' || ch == 'R')) start_single_game(&game);
-                    else if (game.game_over && (ch == 'm' || ch == 'M')) { game.menu_idx = 0; game.screen = SCREEN_MAIN_MENU; }
+                    if (game.game_over) {
+                        if (ch == 13 || ch == ' ') activate_gameover_item(&game, 0);
+                        else if (ch == 'r' || ch == 'R') start_single_game(&game);
+                        else if (ch == 'm' || ch == 'M' || ch == 27) { game.menu_idx = 0; game.game_over = 0; game.screen = SCREEN_MAIN_MENU; }
+                    } else {
+                        if (ch == 'a' || ch == 'A') apply_smooth_move_single(&game, -1, 0, 1);
+                        if (ch == 'd' || ch == 'D') apply_smooth_move_single(&game,  1, 0, 1);
+                        if (ch == 'w' || ch == 'W') apply_smooth_move_single(&game, 0, -1, 1);
+                        if (ch == 's' || ch == 'S') apply_smooth_move_single(&game, 0,  1, 1);
+                        if (ch == 'p' || ch == 'P' || ch == 27) {
+                            game.prev_screen = SCREEN_PLAYING;
+                            game.pause_idx = 0;
+                            game.screen = SCREEN_PAUSED;
+                        }
+                    }
                 } else if (game.screen == SCREEN_BEERACE) {
-                    if (ch == 'j' || ch == 'J') apply_smooth_move_racer(&game, &game.p2, -1, 0, 1);
-                    if (ch == 'l' || ch == 'L') apply_smooth_move_racer(&game, &game.p2,  1, 0, 1);
-                    if (ch == 'i' || ch == 'I') apply_smooth_move_racer(&game, &game.p2, 0, -1, 1);
-                    if (ch == 'k' || ch == 'K') apply_smooth_move_racer(&game, &game.p2, 0,  1, 1);
-                    if (ch == 'p' || ch == 'P' || ch == 27) {
-                        game.prev_screen = SCREEN_BEERACE;
-                        game.pause_idx = 0;
-                        game.screen = SCREEN_PAUSED;
-                    } else if (game.race_over && (ch == 'r' || ch == 'R')) start_beerace(&game);
-                    else if (game.race_over && (ch == 'm' || ch == 'M')) { game.menu_idx = 0; game.screen = SCREEN_MAIN_MENU; }
+                    if (game.race_over) {
+                        if (ch == 13 || ch == ' ') activate_gameover_item(&game, 1);
+                        else if (ch == 'r' || ch == 'R') start_beerace(&game);
+                        else if (ch == 'm' || ch == 'M' || ch == 27) { game.menu_idx = 0; game.race_over = 0; game.screen = SCREEN_MAIN_MENU; }
+                    } else {
+                        if (ch == 'j' || ch == 'J') apply_smooth_move_racer(&game, &game.p2, -1, 0, 1);
+                        if (ch == 'l' || ch == 'L') apply_smooth_move_racer(&game, &game.p2,  1, 0, 1);
+                        if (ch == 'i' || ch == 'I') apply_smooth_move_racer(&game, &game.p2, 0, -1, 1);
+                        if (ch == 'k' || ch == 'K') apply_smooth_move_racer(&game, &game.p2, 0,  1, 1);
+                        if (ch == 'p' || ch == 'P' || ch == 27) {
+                            game.prev_screen = SCREEN_BEERACE;
+                            game.pause_idx = 0;
+                            game.screen = SCREEN_PAUSED;
+                        }
+                    }
                 } else if (game.screen == SCREEN_PAUSED) {
                     if (ch == 13) activate_pause_item(&game);
                     else if (ch == '1') game.screen = game.prev_screen;
@@ -2537,35 +2625,59 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (wParam == VK_RETURN || wParam == VK_SPACE) activate_main_item(&g_win, &running);
                 if (!running) PostMessage(hwnd, WM_CLOSE, 0, 0);
             } else if (g_win.screen == SCREEN_PLAYING) {
-                if (wParam == VK_LEFT  || wParam == 'A') apply_smooth_move_single(&g_win, -1, 0, 1);
-                if (wParam == VK_RIGHT || wParam == 'D') apply_smooth_move_single(&g_win,  1, 0, 1);
-                if (wParam == VK_UP    || wParam == 'W') apply_smooth_move_single(&g_win, 0, -1, 1);
-                if (wParam == VK_DOWN  || wParam == 'S') apply_smooth_move_single(&g_win, 0,  1, 1);
-                if (wParam == 'P' || wParam == VK_ESCAPE) {
-                    g_win.prev_screen = SCREEN_PLAYING;
-                    g_win.pause_idx = 0;
-                    g_win.screen = SCREEN_PAUSED;
+                if (g_win.game_over) {
+                    if (wParam == VK_UP)   g_win.gameover_idx = (g_win.gameover_idx + 2) % 3;
+                    if (wParam == VK_DOWN) g_win.gameover_idx = (g_win.gameover_idx + 1) % 3;
+                    if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_RETURN || wParam == VK_SPACE) {
+                        activate_gameover_item(&g_win, 0);
+                    }
+                    if (wParam == 'R') start_single_game(&g_win);
+                    if (wParam == 'M' || wParam == VK_ESCAPE) {
+                        g_win.menu_idx = 0;
+                        g_win.game_over = 0;
+                        g_win.screen = SCREEN_MAIN_MENU;
+                    }
+                } else {
+                    if (wParam == VK_LEFT  || wParam == 'A') apply_smooth_move_single(&g_win, -1, 0, 1);
+                    if (wParam == VK_RIGHT || wParam == 'D') apply_smooth_move_single(&g_win,  1, 0, 1);
+                    if (wParam == VK_UP    || wParam == 'W') apply_smooth_move_single(&g_win, 0, -1, 1);
+                    if (wParam == VK_DOWN  || wParam == 'S') apply_smooth_move_single(&g_win, 0,  1, 1);
+                    if (wParam == 'P' || wParam == VK_ESCAPE) {
+                        g_win.prev_screen = SCREEN_PLAYING;
+                        g_win.pause_idx = 0;
+                        g_win.screen = SCREEN_PAUSED;
+                    }
                 }
-                if (g_win.game_over && wParam == 'R') start_single_game(&g_win);
-                if (g_win.game_over && wParam == 'M') { g_win.menu_idx = 0; g_win.screen = SCREEN_MAIN_MENU; }
             } else if (g_win.screen == SCREEN_BEERACE) {
-                if (wParam == VK_LEFT)  apply_smooth_move_racer(&g_win, &g_win.p1, -1, 0, 1);
-                if (wParam == VK_RIGHT) apply_smooth_move_racer(&g_win, &g_win.p1,  1, 0, 1);
-                if (wParam == VK_UP)    apply_smooth_move_racer(&g_win, &g_win.p1, 0, -1, 1);
-                if (wParam == VK_DOWN)  apply_smooth_move_racer(&g_win, &g_win.p1, 0,  1, 1);
+                if (g_win.race_over) {
+                    if (wParam == VK_UP)   g_win.gameover_idx = (g_win.gameover_idx + 2) % 3;
+                    if (wParam == VK_DOWN) g_win.gameover_idx = (g_win.gameover_idx + 1) % 3;
+                    if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_RETURN || wParam == VK_SPACE) {
+                        activate_gameover_item(&g_win, 1);
+                    }
+                    if (wParam == 'R') start_beerace(&g_win);
+                    if (wParam == 'M' || wParam == VK_ESCAPE) {
+                        g_win.menu_idx = 0;
+                        g_win.race_over = 0;
+                        g_win.screen = SCREEN_MAIN_MENU;
+                    }
+                } else {
+                    if (wParam == VK_LEFT)  apply_smooth_move_racer(&g_win, &g_win.p1, -1, 0, 1);
+                    if (wParam == VK_RIGHT) apply_smooth_move_racer(&g_win, &g_win.p1,  1, 0, 1);
+                    if (wParam == VK_UP)    apply_smooth_move_racer(&g_win, &g_win.p1, 0, -1, 1);
+                    if (wParam == VK_DOWN)  apply_smooth_move_racer(&g_win, &g_win.p1, 0,  1, 1);
 
-                if (wParam == 'J' || wParam == 'F') apply_smooth_move_racer(&g_win, &g_win.p2, -1, 0, 1);
-                if (wParam == 'L' || wParam == 'H') apply_smooth_move_racer(&g_win, &g_win.p2,  1, 0, 1);
-                if (wParam == 'I' || wParam == 'T') apply_smooth_move_racer(&g_win, &g_win.p2, 0, -1, 1);
-                if (wParam == 'K' || wParam == 'G') apply_smooth_move_racer(&g_win, &g_win.p2, 0,  1, 1);
+                    if (wParam == 'J' || wParam == 'F') apply_smooth_move_racer(&g_win, &g_win.p2, -1, 0, 1);
+                    if (wParam == 'L' || wParam == 'H') apply_smooth_move_racer(&g_win, &g_win.p2,  1, 0, 1);
+                    if (wParam == 'I' || wParam == 'T') apply_smooth_move_racer(&g_win, &g_win.p2, 0, -1, 1);
+                    if (wParam == 'K' || wParam == 'G') apply_smooth_move_racer(&g_win, &g_win.p2, 0,  1, 1);
 
-                if (wParam == 'P' || wParam == VK_ESCAPE) {
-                    g_win.prev_screen = SCREEN_BEERACE;
-                    g_win.pause_idx = 0;
-                    g_win.screen = SCREEN_PAUSED;
+                    if (wParam == 'P' || wParam == VK_ESCAPE) {
+                        g_win.prev_screen = SCREEN_BEERACE;
+                        g_win.pause_idx = 0;
+                        g_win.screen = SCREEN_PAUSED;
+                    }
                 }
-                if (g_win.race_over && wParam == 'R') start_beerace(&g_win);
-                if (g_win.race_over && wParam == 'M') { g_win.menu_idx = 0; g_win.screen = SCREEN_MAIN_MENU; }
             } else if (g_win.screen == SCREEN_PAUSED) {
                 if (wParam == VK_UP)   g_win.pause_idx = (g_win.pause_idx + 2) % 3;
                 if (wParam == VK_DOWN) g_win.pause_idx = (g_win.pause_idx + 1) % 3;
