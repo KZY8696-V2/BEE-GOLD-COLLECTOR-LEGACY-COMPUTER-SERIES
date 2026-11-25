@@ -219,6 +219,7 @@ typedef struct {
 } ReplaySample;
 
 typedef struct {
+    int host_is_p1;
     int bee_x;
     int bee_y;
     int bee_vx;
@@ -435,18 +436,19 @@ static const unsigned char *get_font_rows(char ch) {
     }
 }
 
+/* Windows BI_RGB / StretchDIBits expects 32-bit pixels in 0x00BBGGRR byte order */
 #if !BGC_DOS_TARGET
 static unsigned int vga_to_bgr_u32(unsigned char idx) {
     switch (idx) {
-        case C_VGA_BLACK:  return 0x000C0C0Cu;
-        case C_VGA_GRASS:  return 0x00228B22u;
-        case C_VGA_LEAF:   return 0x0040C648u;
-        case C_VGA_TRUNK:  return 0x00204473u;
-        case C_VGA_SKY:    return 0x00F5CD7Du;
-        case C_VGA_YELLOW: return 0x0000D7FFu;
-        case C_VGA_WING:   return 0x00FFFAF5u;
-        case C_VGA_RED:    return 0x002323D2u;
-        case C_VGA_PANEL:  return 0x00EEE8E0u;
+        case C_VGA_BLACK:  return 0x000C0C0Cu; /* RGB(12,12,12) */
+        case C_VGA_GRASS:  return 0x00228B22u; /* RGB(34,139,34) */
+        case C_VGA_LEAF:   return 0x0040C648u; /* RGB(72,198,64) */
+        case C_VGA_TRUNK:  return 0x00204473u; /* RGB(115,68,32) */
+        case C_VGA_SKY:    return 0x00F5CD7Du; /* RGB(125,205,245) */
+        case C_VGA_YELLOW: return 0x0000D7FFu; /* RGB(255,215,0) */
+        case C_VGA_WING:   return 0x00FFFAF5u; /* RGB(245,250,255) */
+        case C_VGA_RED:    return 0x002323D2u; /* RGB(210,35,35) */
+        case C_VGA_PANEL:  return 0x00EEE8E0u; /* RGB(224,232,238) */
         default:           return 0x00F5CD7Du;
     }
 }
@@ -1710,7 +1712,7 @@ static void draw_mouse_cursor(const BGC_Game *g, void *hdc_ptr) {
 }
 
 /* ============================================================================
- * 8. SINGLE & BEERACE GAMEPLAY LOGIC (SMOOTH FOLLOW + HOLD/TAP + MULTI-SPAWN)
+ * 8. SINGLE & BEERACE GAMEPLAY LOGIC (HOST = P1, P2 ONLY IN GAMEPLAY)
  * ============================================================================ */
 
 static int mouse_allowed_in_mode(const BGC_Game *g) {
@@ -1748,6 +1750,7 @@ static void spawn_single_gold_bar(BGC_Game *g) {
 
 static void start_single_game(BGC_Game *g) {
     int i;
+    g->host_is_p1 = 1;
     g->bee_x = SCR_W / 5;
     g->bee_y = SCR_H / 2;
     g->bee_vx = 0;
@@ -1808,11 +1811,12 @@ static void init_racer(Racer *r, int pane_w, int pane_h, int seed_offset) {
 
 static void open_beerace_lobby(BGC_Game *g) {
     int half_w = SCR_W / 2;
+    g->host_is_p1 = 1;
     init_racer(&g->p1, half_w, SCR_H, 7);
     init_racer(&g->p2, half_w, SCR_H, 19);
     g->race_started = 0;
     g->p1_ready = 1;
-    g->p2_ready = (g->pad2.connected || (g->mouse.available && g->mouse.act_as_pad2 && mouse_allowed_in_mode(g))) ? 1 : 0;
+    g->p2_ready = g->pad2.connected ? 1 : 0;
     g->p2_is_pad = g->pad2.connected ? 1 : 0;
     g->race_over = 0;
     g->race_winner = 0;
@@ -1825,7 +1829,7 @@ static void open_beerace_lobby(BGC_Game *g) {
 
 static void launch_beerace_match(BGC_Game *g) {
     int half_w = SCR_W / 2;
-    if (!g->p2_ready) return;
+    g->host_is_p1 = 1;
     init_racer(&g->p1, half_w, SCR_H, 7);
     init_racer(&g->p2, half_w, SCR_H, 19);
     g->race_started = 1;
@@ -2253,6 +2257,7 @@ static void toggle_setting_item(BGC_Game *g) {
 }
 
 static void activate_main_item(BGC_Game *g, int *running) {
+    g->host_is_p1 = 1;
     if (g->menu_idx == 0) {
         start_single_game(g);
     } else if (g->menu_idx == 1) {
@@ -2278,6 +2283,7 @@ static int point_in_box(int px, int py, int bx, int by, int bw, int bh) {
     return (px >= bx && px < bx + bw && py >= by && py < by + bh) ? 1 : 0;
 }
 
+/* Host (Player 1) controls all menus & game start; P2 only acts inside active gameplay */
 static void apply_mouse_to_game(BGC_Game *g, int *running) {
     BGC_Mouse *m = &g->mouse;
     int pause_requested = 0;
@@ -2361,11 +2367,8 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
         }
     } else if (g->screen == SCREEN_BEERACE) {
         if (!g->race_started) {
-            if (m->act_as_pad2 && mouse_allowed_in_mode(g) &&
-                (m->x != m->prev_x || m->y != m->prev_y || m->click_left)) {
-                g->p2_ready = 1;
-            }
-            if (m->click_left && point_in_box(m->x, m->y, 54, 108, 212, 20) && g->p2_ready) {
+            /* Only Host (P1) starts the match from the lobby */
+            if (m->click_left && point_in_box(m->x, m->y, 54, 108, 212, 20)) {
                 launch_beerace_match(g);
                 return;
             }
@@ -2391,6 +2394,7 @@ static void apply_mouse_to_game(BGC_Game *g, int *running) {
             g->screen = SCREEN_PAUSED;
             return;
         }
+        /* P2 mouse control only during active race */
         if (!m->follow_mode && m->act_as_pad2 && !g->pad2.connected && mouse_allowed_in_mode(g) &&
             (m->left_down || m->x != m->prev_x || m->y != m->prev_y)) {
             int half_w = SCR_W / 2;
@@ -2534,29 +2538,22 @@ static void render_beerace_lobby(const BGC_Game *g, void *hdc_ptr) {
     draw_mini_bee_race(g, hdc_ptr, half_w + 36, 78, g->tick);
 
     draw_box(g, hdc_ptr, 26, 26, 268, 146, C_VGA_PANEL, 1);
-    draw_str_5x7(g, hdc_ptr, 92, 34, "BEERACE 2P LOBBY", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 86, 34, "BEERACE 2P (HOST=P1)", C_VGA_BLACK);
 
-    draw_str_5x7(g, hdc_ptr, 38, 54, "P1 SCREEN: READY (PAD1 / ARROWS)", C_VGA_GRASS);
+    draw_str_5x7(g, hdc_ptr, 38, 54, "HOST P1: MENU + START + PAD1", C_VGA_GRASS);
 
     if (g->p2_ready) {
-        if (g->p2_is_pad) sprintf(p2_state, "P2 SCREEN: GAMEPAD 2 READY");
-        else if (g->mouse.available && g->mouse.act_as_pad2) sprintf(p2_state, "P2 SCREEN: MOUSE PAD2 READY");
-        else sprintf(p2_state, "P2 SCREEN: KEYBOARD P2 READY");
+        sprintf(p2_state, "P2 SLOT: GAMEPLAY ONLY READY");
         draw_str_5x7(g, hdc_ptr, 38, 70, p2_state, C_VGA_GRASS);
     } else {
-        draw_str_5x7(g, hdc_ptr, 38, 70, "P2 SCREEN: WAITING 2ND CTRL...", C_VGA_RED);
-        draw_str_5x7(g, hdc_ptr, 38, 84, "NEED PAD2 / MOUSE / P2 KEYS", C_VGA_BLACK);
+        draw_str_5x7(g, hdc_ptr, 38, 70, "P2 SLOT: IN-GAME ONLY (PAD2)", C_VGA_BLACK);
+        draw_str_5x7(g, hdc_ptr, 38, 84, "P2 CANNOT CONTROL MENUS", C_VGA_RED);
     }
 
-    if (g->p2_ready) {
-        draw_box(g, hdc_ptr, 54, 108, 212, 20, C_VGA_YELLOW, 1);
-        draw_str_5x7(g, hdc_ptr, 84, 115, "> OYUNU BASLAT (ENTER)", C_VGA_BLACK);
-    } else {
-        draw_box(g, hdc_ptr, 54, 108, 212, 20, C_VGA_WING, 1);
-        draw_str_5x7(g, hdc_ptr, 66, 115, "2. KONTROLCU BEKLENIYOR...", C_VGA_RED);
-    }
+    draw_box(g, hdc_ptr, 54, 108, 212, 20, C_VGA_YELLOW, 1);
+    draw_str_5x7(g, hdc_ptr, 76, 115, "> HOST P1: START (ENTER)", C_VGA_BLACK);
 
-    draw_str_5x7(g, hdc_ptr, 66, 148, "ESC: ANA MENU", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 66, 148, "ESC: MAIN MENU", C_VGA_BLACK);
     draw_mouse_cursor(g, hdc_ptr);
 }
 
@@ -2633,10 +2630,10 @@ static void render_controls(BGC_Game *g, void *hdc_ptr) {
     draw_box(g, hdc_ptr, 20, 16, 280, 168, C_VGA_PANEL, 1);
     draw_str_5x7(g, hdc_ptr, 118, 24, "CONTROLS", C_VGA_BLACK);
 
-    draw_str_5x7(g, hdc_ptr, 28, 42, "MENU    : MOUSE + KEY + PAD ALL OK", C_VGA_GRASS);
+    draw_str_5x7(g, hdc_ptr, 28, 42, "HOST P1 : ALL MENUS + START", C_VGA_GRASS);
     draw_str_5x7(g, hdc_ptr, 28, 56, "P1 MOVE : ARROWS / WASD / PAD1", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 70, "MOUSE   : FOLLOW + L+R OR R PAUSE", C_VGA_RED);
-    draw_str_5x7(g, hdc_ptr, 28, 84, "P2 RACE : IJKL / TFGH / PAD2/MSE", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 84, "P2 RACE : IN-GAME ONLY (PAD2)", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 98, "COIN:+10 BAR:+30 BUG:-35", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 112, "OPTS SAVED: BGCOPT.DAT  BMP:F12", C_VGA_BLACK);
 
@@ -2848,18 +2845,11 @@ static void poll_held_keyboard_win(BGC_Game *g) {
         if (p1_dx != 0 || p1_dy != 0) {
             apply_smooth_move_single(g, p1_dx, p1_dy, 0);
         }
-    } else if (g->screen == SCREEN_BEERACE && !g->race_started) {
-        if ((GetAsyncKeyState('J') & 0x8000) || (GetAsyncKeyState('F') & 0x8000) ||
-            (GetAsyncKeyState('L') & 0x8000) || (GetAsyncKeyState('H') & 0x8000) ||
-            (GetAsyncKeyState('I') & 0x8000) || (GetAsyncKeyState('T') & 0x8000) ||
-            (GetAsyncKeyState('K') & 0x8000) || (GetAsyncKeyState('G') & 0x8000)) {
-            g->p2_ready = 1;
-            g->p2_is_pad = 0;
-        }
     } else if (g->screen == SCREEN_BEERACE && g->race_started && !g->race_over) {
         if (p1_dx != 0 || p1_dy != 0) {
             apply_smooth_move_racer(g, &g->p1, p1_dx, p1_dy, 0);
         }
+        /* P2 keyboard only active during active race */
         if (GetAsyncKeyState('J') & 0x8000 || GetAsyncKeyState('F') & 0x8000) p2_dx -= 1;
         if (GetAsyncKeyState('L') & 0x8000 || GetAsyncKeyState('H') & 0x8000) p2_dx += 1;
         if (GetAsyncKeyState('I') & 0x8000 || GetAsyncKeyState('T') & 0x8000) p2_dy -= 1;
@@ -2873,96 +2863,100 @@ static void poll_held_keyboard_win(BGC_Game *g) {
 #endif
 
 static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
-    int pad_dir_y = 0, pad_dir_x = 0;
+    int in_active_gameplay = (g->screen == SCREEN_PLAYING && !g->game_over) ||
+                             (g->screen == SCREEN_BEERACE && g->race_started && !g->race_over);
 
     poll_single_pad(&g->pad1, 0);
     poll_single_pad(&g->pad2, 1);
+
+    /* Pad2 only works inside active gameplay; Host (Pad1) controls all menus & start */
+    if (!in_active_gameplay) {
+        g->pad2.dx = 0;
+        g->pad2.dy = 0;
+        g->pad2.btn_confirm = 0;
+        g->pad2.btn_back = 0;
+        g->pad2.btn_pause = 0;
+        g->pad2.btn_retry = 0;
+    }
 
     if (g->screen != SCREEN_MAIN_MENU && g->ctrl_source == CTRL_SRC_KEYBOARD) {
         return;
     }
 
-    if (!g->pad2.connected && g->mouse.act_as_pad2 && g->mouse.available && mouse_allowed_in_mode(g)) {
+    if (in_active_gameplay && g->screen == SCREEN_BEERACE &&
+        !g->pad2.connected && g->mouse.act_as_pad2 && g->mouse.available && mouse_allowed_in_mode(g)) {
         int mdx = 0, mdy = 0;
         if (g->mouse.x < SCR_W / 2 - 12) mdx = -1;
         else if (g->mouse.x > SCR_W / 2 + 12) mdx = 1;
         if (g->mouse.y < SCR_H / 2 - 12) mdy = -1;
         else if (g->mouse.y > SCR_H / 2 + 12) mdy = 1;
-        update_pad_edges(&g->pad2, g->mouse.click_left, g->mouse.click_right,
-                         (g->mouse.left_down && g->mouse.right_down) ? 1 : 0, 0);
         g->pad2.dx = mdx;
         g->pad2.dy = mdy;
     }
 
-    if (g->pad1.dy != 0) pad_dir_y = g->pad1.dy;
-    else if (g->pad2.dy != 0) pad_dir_y = g->pad2.dy;
-
-    if (g->pad1.dx != 0) pad_dir_x = g->pad1.dx;
-    else if (g->pad2.dx != 0) pad_dir_x = g->pad2.dx;
-
     if (g->screen == SCREEN_MAIN_MENU) {
-        if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
-            if (pad_dir_y < 0) g->menu_idx = (g->menu_idx + 6) % 7;
-            else if (pad_dir_y > 0) g->menu_idx = (g->menu_idx + 1) % 7;
+        if (g->pad1.dy != 0 && g->pad1.nav_cooldown == 0) {
+            if (g->pad1.dy < 0) g->menu_idx = (g->menu_idx + 6) % 7;
+            else if (g->pad1.dy > 0) g->menu_idx = (g->menu_idx + 1) % 7;
             g->pad1.nav_cooldown = 7;
         }
-        if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_main_item(g, running);
+        if (g->pad1.btn_confirm) activate_main_item(g, running);
     } else if (g->screen == SCREEN_MEDIA_VAULT) {
-        if (pad_dir_x != 0 && g->pad1.nav_cooldown == 0) {
-            switch_media_tab(g, pad_dir_x);
+        if (g->pad1.dx != 0 && g->pad1.nav_cooldown == 0) {
+            switch_media_tab(g, g->pad1.dx);
             g->pad1.nav_cooldown = 7;
         }
-        if (g->pad1.btn_confirm || g->pad2.btn_confirm) toggle_current_media_play(g);
-        if (g->pad1.btn_retry || g->pad2.btn_retry) save_current_media_to_device(g);
-        if (g->pad1.btn_back || g->pad2.btn_back) g->screen = SCREEN_MAIN_MENU;
+        if (g->pad1.btn_confirm) toggle_current_media_play(g);
+        if (g->pad1.btn_retry) save_current_media_to_device(g);
+        if (g->pad1.btn_back) g->screen = SCREEN_MAIN_MENU;
     } else if (g->screen == SCREEN_PLAYING) {
         if (g->game_over) {
-            if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
-                if (pad_dir_y < 0) g->gameover_idx = (g->gameover_idx + 2) % 3;
-                else if (pad_dir_y > 0) g->gameover_idx = (g->gameover_idx + 1) % 3;
+            if (g->pad1.dy != 0 && g->pad1.nav_cooldown == 0) {
+                if (g->pad1.dy < 0) g->gameover_idx = (g->gameover_idx + 2) % 3;
+                else if (g->pad1.dy > 0) g->gameover_idx = (g->gameover_idx + 1) % 3;
                 g->pad1.nav_cooldown = 7;
             }
-            if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_gameover_item(g, 0);
-            if (g->pad1.btn_retry || g->pad2.btn_retry) start_single_game(g);
-            if (g->pad1.btn_back || g->pad2.btn_back) {
+            if (g->pad1.btn_confirm) activate_gameover_item(g, 0);
+            if (g->pad1.btn_retry) start_single_game(g);
+            if (g->pad1.btn_back) {
                 g->menu_idx = 0;
                 g->game_over = 0;
                 g->screen = SCREEN_MAIN_MENU;
             }
             return;
         }
-        if (!g->mouse.follow_mode && (pad_dir_x != 0 || pad_dir_y != 0)) {
-            apply_smooth_move_single(g, pad_dir_x, pad_dir_y, 0);
+        if (!g->mouse.follow_mode && (g->pad1.dx != 0 || g->pad1.dy != 0)) {
+            apply_smooth_move_single(g, g->pad1.dx, g->pad1.dy, 0);
         }
-        if (g->pad1.btn_pause || g->pad1.btn_back || g->pad2.btn_pause || g->pad2.btn_back) {
+        if (g->pad1.btn_pause || g->pad1.btn_back) {
             g->prev_screen = SCREEN_PLAYING;
             g->pause_idx = 0;
             g->screen = SCREEN_PAUSED;
         }
     } else if (g->screen == SCREEN_BEERACE) {
         if (!g->race_started) {
-            if (g->pad2.connected || g->pad2.dx != 0 || g->pad2.dy != 0 || g->pad2.btn_confirm) {
+            if (g->pad2.connected) {
                 g->p2_ready = 1;
-                g->p2_is_pad = g->pad2.connected ? 1 : 0;
+                g->p2_is_pad = 1;
             }
-            if (g->p2_ready && (g->pad1.btn_confirm || g->pad2.btn_confirm)) {
+            if (g->pad1.btn_confirm) {
                 launch_beerace_match(g);
             }
-            if (g->pad1.btn_back || g->pad2.btn_back) {
+            if (g->pad1.btn_back) {
                 g->menu_idx = 0;
                 g->screen = SCREEN_MAIN_MENU;
             }
             return;
         }
         if (g->race_over) {
-            if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
-                if (pad_dir_y < 0) g->gameover_idx = (g->gameover_idx + 2) % 3;
-                else if (pad_dir_y > 0) g->gameover_idx = (g->gameover_idx + 1) % 3;
+            if (g->pad1.dy != 0 && g->pad1.nav_cooldown == 0) {
+                if (g->pad1.dy < 0) g->gameover_idx = (g->gameover_idx + 2) % 3;
+                else if (g->pad1.dy > 0) g->gameover_idx = (g->gameover_idx + 1) % 3;
                 g->pad1.nav_cooldown = 7;
             }
-            if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_gameover_item(g, 1);
-            if (g->pad1.btn_retry || g->pad2.btn_retry) launch_beerace_match(g);
-            if (g->pad1.btn_back || g->pad2.btn_back) {
+            if (g->pad1.btn_confirm) activate_gameover_item(g, 1);
+            if (g->pad1.btn_retry) launch_beerace_match(g);
+            if (g->pad1.btn_back) {
                 g->menu_idx = 0;
                 g->race_over = 0;
                 g->race_started = 0;
@@ -2974,42 +2968,42 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
             apply_smooth_move_racer(g, &g->p1, g->pad1.dx, g->pad1.dy, 0);
         }
         if (!g->mouse.follow_mode && (g->pad2.dx != 0 || g->pad2.dy != 0)) {
+            g->p2_ready = 1;
             apply_smooth_move_racer(g, &g->p2, g->pad2.dx, g->pad2.dy, 0);
         }
-        if (g->pad1.btn_pause || g->pad2.btn_pause) {
+        if (g->pad1.btn_pause) {
             g->prev_screen = SCREEN_BEERACE;
             g->pause_idx = 0;
             g->screen = SCREEN_PAUSED;
         }
     } else if (g->screen == SCREEN_PAUSED) {
-        if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
-            if (pad_dir_y < 0) g->pause_idx = (g->pause_idx + 2) % 3;
-            else if (pad_dir_y > 0) g->pause_idx = (g->pause_idx + 1) % 3;
+        if (g->pad1.dy != 0 && g->pad1.nav_cooldown == 0) {
+            if (g->pad1.dy < 0) g->pause_idx = (g->pause_idx + 2) % 3;
+            else if (g->pad1.dy > 0) g->pause_idx = (g->pause_idx + 1) % 3;
             g->pad1.nav_cooldown = 7;
         }
-        if (g->pad1.btn_confirm || g->pad2.btn_confirm) activate_pause_item(g);
-        if (g->pad1.btn_pause || g->pad1.btn_back || g->pad2.btn_pause || g->pad2.btn_back) {
+        if (g->pad1.btn_confirm) activate_pause_item(g);
+        if (g->pad1.btn_pause || g->pad1.btn_back) {
             g->screen = g->prev_screen;
         }
     } else if (g->screen == SCREEN_SETTINGS) {
-        if (pad_dir_y != 0 && g->pad1.nav_cooldown == 0) {
-            if (pad_dir_y < 0) g->settings_idx = (g->settings_idx + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
-            else if (pad_dir_y > 0) g->settings_idx = (g->settings_idx + 1) % SETTINGS_COUNT;
+        if (g->pad1.dy != 0 && g->pad1.nav_cooldown == 0) {
+            if (g->pad1.dy < 0) g->settings_idx = (g->settings_idx + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
+            else if (g->pad1.dy > 0) g->settings_idx = (g->settings_idx + 1) % SETTINGS_COUNT;
             g->pad1.nav_cooldown = 7;
         }
-        if ((g->pad1.btn_confirm || g->pad2.btn_confirm) || (pad_dir_x != 0 && g->pad1.nav_cooldown == 0)) {
+        if (g->pad1.btn_confirm || (g->pad1.dx != 0 && g->pad1.nav_cooldown == 0)) {
             toggle_setting_item(g);
             g->pad1.nav_cooldown = 7;
         }
-        if (g->pad1.btn_back || g->pad2.btn_back) g->screen = g->prev_screen;
+        if (g->pad1.btn_back) g->screen = g->prev_screen;
     } else if (g->screen == SCREEN_CONTROLS) {
-        if (g->pad1.btn_confirm || g->pad1.btn_back || g->pad1.btn_pause ||
-            g->pad2.btn_confirm || g->pad2.btn_back || g->pad2.btn_pause) {
+        if (g->pad1.btn_confirm || g->pad1.btn_back || g->pad1.btn_pause) {
             g->screen = g->prev_screen;
         }
     } else if (g->screen == SCREEN_WIFI_SCORE) {
-        if (g->pad1.btn_confirm || g->pad2.btn_confirm) compare_score_over_wifi_ip(g);
-        if (g->pad1.btn_back || g->pad2.btn_back) g->screen = SCREEN_MAIN_MENU;
+        if (g->pad1.btn_confirm) compare_score_over_wifi_ip(g);
+        if (g->pad1.btn_back) g->screen = SCREEN_MAIN_MENU;
     }
 }
 
@@ -3049,6 +3043,7 @@ int main(int argc, char **argv) {
 
     srand((unsigned int)time(NULL));
     memset(&game, 0, sizeof(game));
+    game.host_is_p1 = 1;
     init_mouse_state(&game.mouse);
     dos_init_mouse_driver(&game.mouse);
     strcpy(game.peer_ip, "192.168.1.16");
@@ -3143,13 +3138,7 @@ int main(int argc, char **argv) {
                     }
                 } else if (game.screen == SCREEN_BEERACE) {
                     if (!game.race_started) {
-                        if (ch == 'j' || ch == 'J' || ch == 'l' || ch == 'L' ||
-                            ch == 'i' || ch == 'I' || ch == 'k' || ch == 'K' ||
-                            ch == 'f' || ch == 'F' || ch == 'h' || ch == 'H' ||
-                            ch == 't' || ch == 'T' || ch == 'g' || ch == 'G') {
-                            game.p2_ready = 1;
-                            game.p2_is_pad = 0;
-                        } else if (ch == 13 && game.p2_ready) {
+                        if (ch == 13) {
                             launch_beerace_match(&game);
                         } else if (ch == 27) {
                             game.menu_idx = 0;
@@ -3386,11 +3375,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 }
             } else if (g_win.screen == SCREEN_BEERACE) {
                 if (!g_win.race_started) {
-                    if (wParam == 'J' || wParam == 'F' || wParam == 'L' || wParam == 'H' ||
-                        wParam == 'I' || wParam == 'T' || wParam == 'K' || wParam == 'G') {
-                        g_win.p2_ready = 1;
-                        g_win.p2_is_pad = 0;
-                    } else if ((wParam == VK_RETURN || wParam == VK_SPACE) && g_win.p2_ready) {
+                    if (wParam == VK_RETURN || wParam == VK_SPACE) {
                         launch_beerace_match(&g_win);
                     } else if (wParam == VK_ESCAPE) {
                         g_win.menu_idx = 0;
@@ -3496,6 +3481,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     (void)hPrev;
 
     memset(&g_win, 0, sizeof(g_win));
+    g_win.host_is_p1 = 1;
     init_mouse_state(&g_win.mouse);
     strcpy(g_win.peer_ip, "192.168.1.16");
     g_win.screen = SCREEN_MAIN_MENU;
