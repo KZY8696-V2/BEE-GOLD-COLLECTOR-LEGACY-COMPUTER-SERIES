@@ -1657,8 +1657,13 @@ static void draw_mouse_cursor(const BGC_Game *g, void *hdc_ptr) {
  * 8. SINGLE & BEERACE GAMEPLAY LOGIC (v1.2 SWARM BUGS + WAVE MOTION)
  * ============================================================================ */
 
+static int is_gameplay_screen(const BGC_Game *g) {
+    return (g->screen == SCREEN_PLAYING || g->screen == SCREEN_BEERACE) ? 1 : 0;
+}
+
 static int mouse_allowed_in_mode(const BGC_Game *g) {
-    if (g->ctrl_source == CTRL_SRC_KEYBOARD || g->ctrl_source == CTRL_SRC_GAMEPAD) {
+    if (is_gameplay_screen(g) &&
+        (g->ctrl_source == CTRL_SRC_KEYBOARD || g->ctrl_source == CTRL_SRC_GAMEPAD)) {
         return 0;
     }
     return 1;
@@ -2804,7 +2809,7 @@ static void poll_dual_pads_and_apply(BGC_Game *g, int *running) {
         g->pad2.btn_retry = 0;
     }
 
-    if (g->screen != SCREEN_MAIN_MENU && g->ctrl_source == CTRL_SRC_KEYBOARD) {
+    if (in_active_gameplay && g->ctrl_source == CTRL_SRC_KEYBOARD) {
         return;
     }
 
