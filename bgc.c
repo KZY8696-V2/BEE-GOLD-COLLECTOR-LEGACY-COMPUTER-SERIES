@@ -1,14 +1,14 @@
 /* ============================================================================
- * BEE GOLD COLLECTOR v1.1.1 - 2026 KGAMER (VGA ONLY)
- * + UPDATE NAMES: EASYFAST UPDATE
+ * BEE GOLD COLLECTOR v1.2 - 2026 KGAMER (VGA ONLY)
+ * + UPDATE NAMES: SWARM 1.2
  * + UNIFIED VGA BUFFER RENDERING (NO GDI BACKEND)
  * + TWO SEPARATE COLOR TABLES FROM STANDARD WEB HEX CODES (BGR32 & RGB/BMP)
- * + HORIZONTAL-LOCKED (VERTICAL FLIGHT) SLOWER BEE & REDUCED BUG COUNT
+ * + HORIZONTAL-LOCKED (VERTICAL FLIGHT) SLOWER BEE & SWARM BUG COUNT
  * + BUILD-TIME SECRET KEY (BGC_VAULT_KEY)
  * + REPLAY RECORDING, VIDEO RECORDING TO FILE & SCREENSHOT (.BMP) EXPORT
  * + RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR
  * + UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN + SAVE TO DEVICE)
- * + MULTI-GOLD, REDUCED BUGS & GOLD BAR COLLECTIBLE
+ * + MULTI-GOLD, MULTI-BUG & GOLD BAR COLLECTIBLE
  * + HOLD + TAP SMOOTH ASCENT & FULL MAIN MENU MULTI-INPUT (MOUSE+KEY+PAD)
  * + NO PASSIVE HEALTH DRAIN (HEALTH CHANGES ONLY ON GOLD / BAR / BUG)
  * + GAME OVER AT PAUSE POSITION WITH RETRY & MAIN MENU BUTTONS
@@ -73,11 +73,11 @@
     #define BGC_IS_16BIT 0
 #endif
 
-#define BGC_VERSION_STR "1.1.1"
-#define BGC_UPDATE_NAME "EASYFAST UPDATE"
+#define BGC_VERSION_STR "1.2"
+#define BGC_UPDATE_NAME "SWARM 1.2"
 
 #ifndef BGC_TITLE
-    #define BGC_TITLE "BEE GOLD COLLECTOR v1.1.1 - 2026 KGAMER"
+    #define BGC_TITLE "BEE GOLD COLLECTOR v1.2 - 2026 KGAMER"
 #endif
 
 #ifndef BGC_VAULT_KEY
@@ -93,7 +93,7 @@
 #define SCR_PIXELS ((unsigned long)SCR_W * (unsigned long)SCR_H)
 
 #define MAX_GOLDS 4
-#define MAX_BUGS  2
+#define MAX_BUGS  8
 
 #define VAULT_FILE      "BGCSCV.DAT"
 #define OPTIONS_FILE    "BGCOPT.DAT"
@@ -266,6 +266,7 @@ typedef struct {
     int bug_x[MAX_BUGS];
     int bug_y[MAX_BUGS];
     int bug_speed[MAX_BUGS];
+    int bug_phase[MAX_BUGS];
     int score;
     int health;
     int dead;
@@ -293,6 +294,7 @@ typedef struct {
     int bug_x[MAX_BUGS];
     int bug_y[MAX_BUGS];
     int bug_speed[MAX_BUGS];
+    int bug_phase[MAX_BUGS];
     int score;
     int best_score;
     int last_score;
@@ -590,7 +592,7 @@ static void draw_str_5x7(const BGC_Game *g, void *hdc_ptr, int x, int y, const c
 
 static void draw_update_footer(const BGC_Game *g, void *hdc_ptr) {
     draw_box(g, hdc_ptr, 0, SCR_H - 10, SCR_W, 10, C_VGA_PANEL, 1);
-    draw_str_5x7(g, hdc_ptr, 8, SCR_H - 8, "V1.1.1  UPDATE NAMES: " BGC_UPDATE_NAME, C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 8, SCR_H - 8, "V1.2  UPDATE NAMES: " BGC_UPDATE_NAME, C_VGA_BLACK);
 }
 
 static void blit_frame_to_screen(const BGC_Game *g, void *hdc_ptr, const unsigned char *frame) {
@@ -1652,7 +1654,7 @@ static void draw_mouse_cursor(const BGC_Game *g, void *hdc_ptr) {
 }
 
 /* ============================================================================
- * 8. SINGLE & BEERACE GAMEPLAY LOGIC (HORIZONTAL LOCKED, SLOWER BEE, FEWER BUGS)
+ * 8. SINGLE & BEERACE GAMEPLAY LOGIC (v1.2 SWARM BUGS + WAVE MOTION)
  * ============================================================================ */
 
 static int mouse_allowed_in_mode(const BGC_Game *g) {
@@ -1668,6 +1670,14 @@ static int random_y_in_range(int min_y, int max_y) {
     return min_y + (rand() % span);
 }
 
+static int wave_offset_from_phase(int phase) {
+    int p = phase & 31;
+    if (p < 8)  return (p + 1) / 2;
+    if (p < 16) return (15 - p) / 2;
+    if (p < 24) return -((p - 15 + 1) / 2);
+    return -((31 - p) / 2);
+}
+
 static void spawn_single_gold_slot(BGC_Game *g, int idx) {
     if (idx < 0 || idx >= MAX_GOLDS) return;
     g->gold_x[idx] = SCR_W - 12 - (idx * 28);
@@ -1676,10 +1686,11 @@ static void spawn_single_gold_slot(BGC_Game *g, int idx) {
 
 static void spawn_single_bug_slot(BGC_Game *g, int idx) {
     if (idx < 0 || idx >= MAX_BUGS) return;
-    g->bug_x[idx] = SCR_W + 18 + (idx * 75);
+    g->bug_x[idx] = SCR_W + 14 + (idx * 28);
     g->bug_y[idx] = random_y_in_range(16, SCR_H - 30);
-    g->bug_speed[idx] = 4 + idx + (g->score / 50);
-    if (g->bug_speed[idx] > 10) g->bug_speed[idx] = 10;
+    g->bug_phase[idx] = (idx * 5 + rand()) & 31;
+    g->bug_speed[idx] = 3 + (idx % 3) + (g->score / 60);
+    if (g->bug_speed[idx] > 9) g->bug_speed[idx] = 9;
 }
 
 static void spawn_single_gold_bar(BGC_Game *g) {
@@ -1721,10 +1732,11 @@ static void spawn_racer_gold_slot(Racer *r, int idx, int pane_w, int pane_h, int
 static void spawn_racer_bug_slot(Racer *r, int idx, int pane_w, int pane_h, int seed_offset) {
     int max_y = (pane_h > 44) ? (pane_h - 24) : 24;
     if (idx < 0 || idx >= MAX_BUGS) return;
-    r->bug_x[idx] = pane_w + 14 + (idx * 56);
+    r->bug_x[idx] = pane_w + 10 + (idx * 22);
     r->bug_y[idx] = 14 + ((rand() + seed_offset * 3 + idx * 17) % (max_y - 12));
-    r->bug_speed[idx] = 4 + idx + (r->score / 50);
-    if (r->bug_speed[idx] > 9) r->bug_speed[idx] = 9;
+    r->bug_phase[idx] = (idx * 4 + seed_offset + rand()) & 31;
+    r->bug_speed[idx] = 3 + (idx % 3) + (r->score / 60);
+    if (r->bug_speed[idx] > 8) r->bug_speed[idx] = 8;
 }
 
 static void spawn_racer_gold_bar(Racer *r, int pane_w, int pane_h, int seed_offset) {
@@ -1927,6 +1939,12 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offs
 
     for (i = 0; i < MAX_BUGS; i++) {
         r->bug_x[i] -= r->bug_speed[i];
+        r->bug_phase[i] = (r->bug_phase[i] + 1) & 31;
+        if ((r->bug_phase[i] & 3) == 0) {
+            r->bug_y[i] += wave_offset_from_phase(r->bug_phase[i]);
+            if (r->bug_y[i] < 14) r->bug_y[i] = 14;
+            if (r->bug_y[i] > pane_h - 25) r->bug_y[i] = pane_h - 25;
+        }
         if (r->bug_x[i] < 6) {
             spawn_racer_bug_slot(r, i, pane_w, pane_h, seed_offset + (int)g->tick);
         }
@@ -2019,6 +2037,12 @@ static void step_single_game(BGC_Game *g) {
 
     for (i = 0; i < MAX_BUGS; i++) {
         g->bug_x[i] -= g->bug_speed[i];
+        g->bug_phase[i] = (g->bug_phase[i] + 1) & 31;
+        if ((g->bug_phase[i] & 3) == 0) {
+            g->bug_y[i] += wave_offset_from_phase(g->bug_phase[i]);
+            if (g->bug_y[i] < 14) g->bug_y[i] = 14;
+            if (g->bug_y[i] > SCR_H - 28) g->bug_y[i] = SCR_H - 28;
+        }
         if (g->bug_x[i] < 8) {
             spawn_single_bug_slot(g, i);
         }
