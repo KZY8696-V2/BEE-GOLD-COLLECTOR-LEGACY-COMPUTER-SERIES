@@ -3376,15 +3376,15 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     toggle_setting_item(&g_win);
                 }
                 if (wParam == VK_ESCAPE) g_win.screen = g_win.prev_screen;
-            }
             } else if (g_win.screen == SCREEN_CONTROLS) {
                 if (wParam == VK_RETURN || wParam == VK_ESCAPE || wParam == VK_SPACE) {
                     g_win.screen = g_win.prev_screen;
                 }
             } else if (g_win.screen == SCREEN_WIFI_SCORE) {
                 if (wParam == VK_RETURN) compare_score_over_wifi_ip(&g_win);
-                if (wParam == VK_ESCAPE) g_win.screen = SCREEN_MAIN_MENU;
+                if (wParam == VK_ESCAPE) g_win.screen = g_win.prev_screen;
             }
+            
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
 
