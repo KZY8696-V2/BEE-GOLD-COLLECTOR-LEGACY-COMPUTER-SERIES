@@ -16,6 +16,7 @@
  * + WIN 1.0 / 2.0 / 3.0 / 3.1X / BOB / NT 3.1 / MT 5.0 WORKSTATION & DOS
  * ============================================================================ */
 
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3370,11 +3371,12 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (wParam == 'P' || wParam == VK_ESCAPE) g_win.screen = g_win.prev_screen;
             } else if (g_win.screen == SCREEN_SETTINGS) {
                 if (wParam == VK_UP)   g_win.settings_idx = (g_win.settings_idx + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
-                if (wParam == VK_DOWN) g_win.settings_idx = (g->settings_idx + 1) % SETTINGS_COUNT;
+                if (wParam == VK_DOWN) g_win.settings_idx = (g_win.settings_idx + 1) % SETTINGS_COUNT;
                 if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_RETURN || wParam == VK_SPACE) {
                     toggle_setting_item(&g_win);
                 }
                 if (wParam == VK_ESCAPE) g_win.screen = g_win.prev_screen;
+            }
             } else if (g_win.screen == SCREEN_CONTROLS) {
                 if (wParam == VK_RETURN || wParam == VK_ESCAPE || wParam == VK_SPACE) {
                     g_win.screen = g_win.prev_screen;
