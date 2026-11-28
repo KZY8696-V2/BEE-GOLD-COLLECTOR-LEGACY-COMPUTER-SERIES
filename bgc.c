@@ -1,14 +1,13 @@
 /* ============================================================================
- * BEE GOLD COLLECTOR v1.2.1F - 2026 KGAMER (VGA ONLY)
- * + UPDATE NAMES: SWARM 1.2.1 FAST (SWARM 1.2.1F)
- * + 10 SWARM BUGS WITH FORWARD/BACKWARD (X) + WAVE (Y) MOTION & FASTER PACE
+ * BEE GOLD COLLECTOR v1.2.1R55 - 2026 KGAMER (VGA ONLY)
+ * + REVERTED EXTRA DIFFICULTY & APPLIED DIRECT +5.5% SPEED BOOST (1.055x)
  * + UNIFIED VGA BUFFER RENDERING (NO GDI BACKEND)
  * + TWO SEPARATE COLOR TABLES FROM STANDARD WEB HEX CODES (BGR32 & RGB/BMP)
  * + BUILD-TIME SECRET KEY (BGC_VAULT_KEY)
  * + REPLAY RECORDING, VIDEO RECORDING TO FILE & SCREENSHOT (.BMP) EXPORT
  * + RUMBLE + DUALSENSE HAPTIC & LED LIGHTBAR
  * + UNIFIED MEDIA VAULT (PHOTO + REPLAY + VIDEO IN ONE SCREEN + SAVE TO DEVICE)
- * + MULTI-GOLD, 10-BUG SWARM & GOLD BAR COLLECTIBLE
+ * + MULTI-GOLD, SWARM BUGS & GOLD BAR COLLECTIBLE
  * + HOLD + TAP SMOOTH ASCENT & FULL MAIN MENU MULTI-INPUT (MOUSE+KEY+PAD)
  * + GAME OVER AT PAUSE POSITION WITH RETRY & MAIN MENU BUTTONS
  * + BEERACE 2P SECOND CONTROLLER LOBBY & COMPACT SPLIT-SCREEN SPRITES
@@ -72,11 +71,15 @@
     #define BGC_IS_16BIT 0
 #endif
 
-#define BGC_VERSION_STR "1.2.1F"
-#define BGC_UPDATE_NAME "SWARM 1.2.1 FAST"
+/* %5.5 hiz carpani (1.055 = 1055 / 1000) */
+#define BGC_SPEED_NUM 1055l
+#define BGC_SPEED_DEN 1000l
+
+#define BGC_VERSION_STR "1.2.1R55"
+#define BGC_UPDATE_NAME "SPEED +5.5PCT"
 
 #ifndef BGC_TITLE
-    #define BGC_TITLE "BEE GOLD COLLECTOR v1.2.1F (SWARM 1.2.1 FAST) - 2026 KGAMER"
+    #define BGC_TITLE "BEE GOLD COLLECTOR v1.2.1R55 (+5.5% SPEED) - 2026 KGAMER"
 #endif
 
 #ifndef BGC_VAULT_KEY
@@ -163,7 +166,6 @@
 #define WEB_B(hex)      ((unsigned char)((hex)         & 0xFFu))
 #define WEB_BGR32(hex)  ((unsigned int)WEB_B(hex) | ((unsigned int)WEB_G(hex) << 8) | ((unsigned int)WEB_R(hex) << 16))
 
-/* Tablo 1: 32-bit BGR (0x00BBGGRR) */
 static const unsigned int g_bgr32_table[16] = {
     WEB_BGR32(WEB_HEX_BLACK),  /* 0  */
     WEB_BGR32(WEB_HEX_SKY),    /* 1  */
@@ -183,7 +185,6 @@ static const unsigned int g_bgr32_table[16] = {
     WEB_BGR32(WEB_HEX_WING)    /* 15 */
 };
 
-/* Tablo 2: Ayri RGB bilesenleri (RGB / BMP) */
 static const unsigned char g_rgb_table[16][3] = {
     { WEB_R(WEB_HEX_BLACK),  WEB_G(WEB_HEX_BLACK),  WEB_B(WEB_HEX_BLACK)  }, /* 0  */
     { WEB_R(WEB_HEX_SKY),    WEB_G(WEB_HEX_SKY),    WEB_B(WEB_HEX_SKY)    }, /* 1  */
@@ -257,6 +258,7 @@ typedef struct {
     int y;
     int vx;
     int vy;
+    long sub_step;
     int gold_x[MAX_GOLDS];
     int gold_y[MAX_GOLDS];
     int gold_bar_x;
@@ -286,6 +288,7 @@ typedef struct {
     int bee_y;
     int bee_vx;
     int bee_vy;
+    long sub_step;
     int gold_x[MAX_GOLDS];
     int gold_y[MAX_GOLDS];
     int gold_bar_x;
@@ -1542,7 +1545,7 @@ static void draw_tree_box(const BGC_Game *g, void *hdc_ptr, int tx, int ground_y
 
 static void draw_viewport_env(const BGC_Game *g, void *hdc_ptr, int vx, int vy, int vw, int vh) {
     int ground_y = vy + vh - 20;
-    int offset = (int)((g->tick * 7l) % 64l);
+    int offset = (int)(((g->tick * 6l * BGC_SPEED_NUM) / BGC_SPEED_DEN) % 64l);
     int tx;
 
     draw_box(g, hdc_ptr, vx, vy, vw, vh - 20, C_VGA_SKY, 0);
@@ -1655,7 +1658,7 @@ static void draw_mouse_cursor(const BGC_Game *g, void *hdc_ptr) {
 }
 
 /* ============================================================================
- * 8. SINGLE & BEERACE GAMEPLAY LOGIC (v1.2.1F 10 BUGS + X/Y MOTION + FASTER)
+ * 8. SINGLE & BEERACE GAMEPLAY LOGIC (+5.5% SPEED APPLIED DIRECTLY)
  * ============================================================================ */
 
 static int is_gameplay_screen(const BGC_Game *g) {
@@ -1684,13 +1687,20 @@ static int wave_offset_from_phase(int phase) {
     return ((31 - p) < 4) ? -1 : 0;
 }
 
-/* Yatay ileri-geri salinim: negatif = geri/sola hizlanma, pozitif = ileri/saga geri cekilme */
 static int surge_x_from_phase(int phase) {
     int p = phase & 31;
-    if (p < 8)  return -2;
-    if (p < 16) return -1;
-    if (p < 24) return  2;
-    return  1;
+    if (p < 8)  return -1;
+    if (p < 16) return  0;
+    if (p < 24) return  1;
+    return  0;
+}
+
+/* Birim hizi tam %5.5 (1.055x) ileri tasiyan birikimli adim hesaplayici */
+static int advance_scaled_units(long *accum, int base_units) {
+    long total = (*accum) + ((long)base_units * BGC_SPEED_NUM);
+    int steps = (int)(total / BGC_SPEED_DEN);
+    *accum = total % BGC_SPEED_DEN;
+    return steps;
 }
 
 static void spawn_single_gold_slot(BGC_Game *g, int idx) {
@@ -1705,8 +1715,8 @@ static void spawn_single_bug_slot(BGC_Game *g, int idx) {
     g->bug_y[idx] = random_y_in_range(16, SCR_H - 30);
     g->bug_phase[idx] = (idx * 7 + rand()) & 31;
     g->bug_vx_phase[idx] = (idx * 5 + rand()) & 31;
-    g->bug_speed[idx] = 4 + (idx % 3) + (g->score / 45);
-    if (g->bug_speed[idx] > 11) g->bug_speed[idx] = 11;
+    g->bug_speed[idx] = 3 + (idx % 2) + (g->score / 60);
+    if (g->bug_speed[idx] > 8) g->bug_speed[idx] = 8;
 }
 
 static void spawn_single_gold_bar(BGC_Game *g) {
@@ -1722,6 +1732,7 @@ static void start_single_game(BGC_Game *g) {
     g->bee_y = SCR_H / 2;
     g->bee_vx = 0;
     g->bee_vy = 0;
+    g->sub_step = 0;
     g->score = 0;
     g->health = 100;
     g->game_over = 0;
@@ -1752,8 +1763,8 @@ static void spawn_racer_bug_slot(Racer *r, int idx, int pane_w, int pane_h, int 
     r->bug_y[idx] = 14 + ((rand() + seed_offset * 3 + idx * 17) % (max_y - 12));
     r->bug_phase[idx] = (idx * 5 + seed_offset + rand()) & 31;
     r->bug_vx_phase[idx] = (idx * 7 + seed_offset + rand()) & 31;
-    r->bug_speed[idx] = 4 + (idx % 3) + (r->score / 45);
-    if (r->bug_speed[idx] > 10) r->bug_speed[idx] = 10;
+    r->bug_speed[idx] = 3 + (idx % 2) + (r->score / 60);
+    if (r->bug_speed[idx] > 8) r->bug_speed[idx] = 8;
 }
 
 static void spawn_racer_gold_bar(Racer *r, int pane_w, int pane_h, int seed_offset) {
@@ -1769,6 +1780,7 @@ static void init_racer(Racer *r, int pane_w, int pane_h, int seed_offset) {
     r->y = pane_h / 2;
     r->vx = 0;
     r->vy = 0;
+    r->sub_step = 0;
     r->score = 0;
     r->health = 100;
     r->dead = 0;
@@ -1789,7 +1801,6 @@ static void open_beerace_lobby(BGC_Game *g) {
     g->p2_is_pad = g->pad2.connected ? 1 : 0;
     g->race_over = 0;
     g->race_winner = 0;
-    g->gameover_idx = 0;
     g->regen_timer_ticks = 0;
     g->tick = 0;
     g->pause_idx = 0;
@@ -1812,9 +1823,9 @@ static void launch_beerace_match(BGC_Game *g) {
 }
 
 static void apply_smooth_move_single(BGC_Game *g, int dx, int dy, int is_tap) {
-    int v_step = is_tap ? 4 : 3;
-    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -8 : -6;
-    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 8 : 6;
+    int v_step = is_tap ? 3 : 2;
+    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -7 : -5;
+    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
     (void)dx;
 
     if (g->screen != SCREEN_PLAYING || g->game_over) return;
@@ -1834,7 +1845,7 @@ static void apply_smooth_move_single(BGC_Game *g, int dx, int dy, int is_tap) {
 static void update_smooth_mouse_follow_single(BGC_Game *g) {
     int diff_y;
     int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 6;
-    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
+    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 6 : 4;
 
     if (!g->mouse.follow_mode || !mouse_allowed_in_mode(g)) return;
     if (!g->mouse.available) return;
@@ -1849,13 +1860,15 @@ static void update_smooth_mouse_follow_single(BGC_Game *g) {
 }
 
 static void update_smooth_bee_physics(BGC_Game *g) {
+    int vy_step;
     if (g->screen != SCREEN_PLAYING || g->game_over) return;
 
     update_smooth_mouse_follow_single(g);
 
     g->bee_x = SCR_W / 5;
     g->bee_vx = 0;
-    g->bee_y += g->bee_vy;
+    vy_step = advance_scaled_units(&g->sub_step, g->bee_vy);
+    g->bee_y += vy_step;
     g->bee_vy = (g->bee_vy * 2) / 3;
 
     if (g->bee_y < 10) { g->bee_y = 10; g->bee_vy = 0; }
@@ -1863,9 +1876,9 @@ static void update_smooth_bee_physics(BGC_Game *g) {
 }
 
 static void apply_smooth_move_racer(const BGC_Game *g, Racer *r, int dx, int dy, int is_tap) {
-    int v_step = is_tap ? 4 : 3;
-    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -8 : -6;
-    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 8 : 6;
+    int v_step = is_tap ? 3 : 2;
+    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -7 : -5;
+    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
     (void)dx;
 
     if (r->dead) return;
@@ -1886,7 +1899,7 @@ static void update_smooth_mouse_follow_racer(const BGC_Game *g, Racer *r, int pa
     int target_y = g->mouse.y;
     int diff_y;
     int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 6;
-    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
+    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 6 : 4;
     (void)pane_w;
     (void)x_offset;
 
@@ -1904,11 +1917,13 @@ static void update_smooth_mouse_follow_racer(const BGC_Game *g, Racer *r, int pa
 }
 
 static void update_smooth_racer_physics(Racer *r, int pane_w, int pane_h) {
+    int vy_step;
     if (r->dead) return;
 
     r->x = pane_w / 5;
     r->vx = 0;
-    r->y += r->vy;
+    vy_step = advance_scaled_units(&r->sub_step, r->vy);
+    r->y += vy_step;
     r->vy = (r->vy * 2) / 3;
 
     if (r->y < 24) { r->y = 24; r->vy = 0; }
@@ -1916,6 +1931,7 @@ static void update_smooth_racer_physics(Racer *r, int pane_w, int pane_h) {
 }
 
 static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offset, int is_p2, int seed_offset) {
+    long world_move = (long)(2 + (int)((g->tick * BGC_SPEED_NUM) / BGC_SPEED_DEN) - (int)g->tick);
     int i;
     if (r->dead) return;
 
@@ -1925,7 +1941,8 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offs
     update_smooth_racer_physics(r, pane_w, pane_h);
 
     for (i = 0; i < MAX_GOLDS; i++) {
-        r->gold_x[i] -= 5 + (i % 2);
+        int g_spd = (int)(((long)(4 + (i % 2)) * BGC_SPEED_NUM) / BGC_SPEED_DEN) + (int)world_move;
+        r->gold_x[i] -= g_spd;
         if (r->gold_x[i] < 6) {
             spawn_racer_gold_slot(r, i, pane_w, pane_h, seed_offset + (int)g->tick);
         }
@@ -1938,11 +1955,12 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offs
         }
     }
 
-    if (!r->gold_bar_active && ((g->tick % 100l) == 0)) {
+    if (!r->gold_bar_active && ((g->tick % 110l) == 0)) {
         spawn_racer_gold_bar(r, pane_w, pane_h, seed_offset + (int)g->tick);
     }
     if (r->gold_bar_active) {
-        r->gold_bar_x -= 5;
+        int b_spd = (int)((4l * BGC_SPEED_NUM) / BGC_SPEED_DEN) + (int)world_move;
+        r->gold_bar_x -= b_spd;
         if (r->gold_bar_x < 8) {
             r->gold_bar_active = 0;
         } else if (abs(r->x - r->gold_bar_x) < 11 && abs(r->y - r->gold_bar_y) < 10) {
@@ -1956,11 +1974,12 @@ static void step_racer(BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offs
 
     for (i = 0; i < MAX_BUGS; i++) {
         int vx_step = 0;
+        int spd_scaled = (int)(((long)r->bug_speed[i] * BGC_SPEED_NUM) / BGC_SPEED_DEN);
         r->bug_vx_phase[i] = (r->bug_vx_phase[i] + 1) & 31;
         if ((r->bug_vx_phase[i] & 1) == 0) {
             vx_step = surge_x_from_phase(r->bug_vx_phase[i]);
         }
-        r->bug_x[i] -= r->bug_speed[i] + vx_step;
+        r->bug_x[i] -= spd_scaled + vx_step;
         if (r->bug_x[i] > pane_w + 18) r->bug_x[i] = pane_w + 18;
 
         r->bug_phase[i] = (r->bug_phase[i] + 1) & 31;
@@ -2030,7 +2049,8 @@ static void step_single_game(BGC_Game *g) {
     update_smooth_bee_physics(g);
 
     for (i = 0; i < MAX_GOLDS; i++) {
-        g->gold_x[i] -= 5 + (i % 2);
+        int g_spd = (int)(((long)(4 + (i % 2)) * BGC_SPEED_NUM) / BGC_SPEED_DEN);
+        g->gold_x[i] -= g_spd;
         if (g->gold_x[i] < 8) {
             spawn_single_gold_slot(g, i);
         }
@@ -2043,11 +2063,12 @@ static void step_single_game(BGC_Game *g) {
         }
     }
 
-    if (!g->gold_bar_active && ((g->tick % 95l) == 0)) {
+    if (!g->gold_bar_active && ((g->tick % 110l) == 0)) {
         spawn_single_gold_bar(g);
     }
     if (g->gold_bar_active) {
-        g->gold_bar_x -= 5;
+        int b_spd = (int)((4l * BGC_SPEED_NUM) / BGC_SPEED_DEN);
+        g->gold_bar_x -= b_spd;
         if (g->gold_bar_x < 8) {
             g->gold_bar_active = 0;
         } else if (abs(g->bee_x - g->gold_bar_x) < 15 && abs(g->bee_y - g->gold_bar_y) < 13) {
@@ -2061,11 +2082,12 @@ static void step_single_game(BGC_Game *g) {
 
     for (i = 0; i < MAX_BUGS; i++) {
         int vx_step = 0;
+        int spd_scaled = (int)(((long)g->bug_speed[i] * BGC_SPEED_NUM) / BGC_SPEED_DEN);
         g->bug_vx_phase[i] = (g->bug_vx_phase[i] + 1) & 31;
         if ((g->bug_vx_phase[i] & 1) == 0) {
             vx_step = surge_x_from_phase(g->bug_vx_phase[i]);
         }
-        g->bug_x[i] -= g->bug_speed[i] + vx_step;
+        g->bug_x[i] -= spd_scaled + vx_step;
         if (g->bug_x[i] > SCR_W + 24) g->bug_x[i] = SCR_W + 24;
 
         g->bug_phase[i] = (g->bug_phase[i] + 1) & 31;
@@ -2597,7 +2619,7 @@ static void render_controls(BGC_Game *g, void *hdc_ptr) {
     draw_str_5x7(g, hdc_ptr, 28, 42, "HOST P1 : ALL MENUS + START", C_VGA_GRASS);
     draw_str_5x7(g, hdc_ptr, 28, 56, "P1 MOVE : UP/DOWN / W-S / PAD1", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 70, "MOUSE   : Y FOLLOW + R PAUSE", C_VGA_RED);
-    draw_str_5x7(g, hdc_ptr, 28, 84, "SWARM   : 10 BUGS (X+Y WAVE)", C_VGA_BLACK);
+    draw_str_5x7(g, hdc_ptr, 28, 84, "SPEED   : DIRECT +5.5PCT BOOST", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 98, "COIN:+10 BAR:+30 BUG:-35", C_VGA_BLACK);
     draw_str_5x7(g, hdc_ptr, 28, 112, "OPTS SAVED: BGCOPT.DAT  BMP:F12", C_VGA_BLACK);
 
@@ -3126,7 +3148,7 @@ int main(int argc, char **argv) {
 #if BGC_DJGPP_TARGET
         bgc_dos_flush_vga();
 #endif
-        delay(9);
+        delay(11);
     }
 
     write_obfuscated_options(&game);
@@ -3216,7 +3238,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 for (i = 0; i < MAX_GOLDS; i++) spawn_single_gold_slot(&g_win, i);
                 for (i = 0; i < MAX_BUGS;  i++) spawn_single_bug_slot(&g_win, i);
                 spawn_single_gold_bar(&g_win);
-                SetTimer(hwnd, 1, 16, NULL);
+                SetTimer(hwnd, 1, 15, NULL);
             }
             return 0;
 
