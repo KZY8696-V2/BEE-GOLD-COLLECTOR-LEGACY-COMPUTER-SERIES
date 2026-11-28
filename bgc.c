@@ -1,6 +1,7 @@
 /* ============================================================================
  * BEE GOLD COLLECTOR v1.2.1R55 - 2026 KGAMER (VGA ONLY)
  * + REVERTED EXTRA DIFFICULTY & APPLIED DIRECT +5.5% SPEED BOOST (1.055x)
+ * + SMOOTH BEE VERTICAL SPEED & DAMPING FIX
  * + UNIFIED VGA BUFFER RENDERING (NO GDI BACKEND)
  * + TWO SEPARATE COLOR TABLES FROM STANDARD WEB HEX CODES (BGR32 & RGB/BMP)
  * + BUILD-TIME SECRET KEY (BGC_VAULT_KEY)
@@ -1658,7 +1659,7 @@ static void draw_mouse_cursor(const BGC_Game *g, void *hdc_ptr) {
 }
 
 /* ============================================================================
- * 8. SINGLE & BEERACE GAMEPLAY LOGIC (+5.5% SPEED APPLIED DIRECTLY)
+ * 8. SINGLE & BEERACE GAMEPLAY LOGIC (+5.5% SPEED & SMOOTH BEE SPEED)
  * ============================================================================ */
 
 static int is_gameplay_screen(const BGC_Game *g) {
@@ -1823,9 +1824,9 @@ static void launch_beerace_match(BGC_Game *g) {
 }
 
 static void apply_smooth_move_single(BGC_Game *g, int dx, int dy, int is_tap) {
-    int v_step = is_tap ? 3 : 2;
-    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -7 : -5;
-    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
+    int v_step = is_tap ? 2 : 1;
+    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -4 : -3;
+    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ?  4 :  3;
     (void)dx;
 
     if (g->screen != SCREEN_PLAYING || g->game_over) return;
@@ -1844,15 +1845,15 @@ static void apply_smooth_move_single(BGC_Game *g, int dx, int dy, int is_tap) {
 
 static void update_smooth_mouse_follow_single(BGC_Game *g) {
     int diff_y;
-    int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 6;
-    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 6 : 4;
+    int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 8 : 10;
+    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 3 : 2;
 
     if (!g->mouse.follow_mode || !mouse_allowed_in_mode(g)) return;
     if (!g->mouse.available) return;
     if (g->screen != SCREEN_PLAYING || g->game_over) return;
 
     diff_y = g->mouse.y - g->bee_y;
-    if (abs(diff_y) > 2) {
+    if (abs(diff_y) > 3) {
         g->bee_vy = diff_y / gain;
         if (g->bee_vy > max_spd) g->bee_vy = max_spd;
         if (g->bee_vy < -max_spd) g->bee_vy = -max_spd;
@@ -1869,16 +1870,16 @@ static void update_smooth_bee_physics(BGC_Game *g) {
     g->bee_vx = 0;
     vy_step = advance_scaled_units(&g->sub_step, g->bee_vy);
     g->bee_y += vy_step;
-    g->bee_vy = (g->bee_vy * 2) / 3;
+    g->bee_vy = g->bee_vy / 2;
 
     if (g->bee_y < 10) { g->bee_y = 10; g->bee_vy = 0; }
     if (g->bee_y > SCR_H - 26) { g->bee_y = SCR_H - 26; g->bee_vy = 0; }
 }
 
 static void apply_smooth_move_racer(const BGC_Game *g, Racer *r, int dx, int dy, int is_tap) {
-    int v_step = is_tap ? 3 : 2;
-    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -7 : -5;
-    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 7 : 5;
+    int v_step = is_tap ? 2 : 1;
+    int max_up = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? -4 : -3;
+    int max_dn = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ?  4 :  3;
     (void)dx;
 
     if (r->dead) return;
@@ -1898,8 +1899,8 @@ static void apply_smooth_move_racer(const BGC_Game *g, Racer *r, int dx, int dy,
 static void update_smooth_mouse_follow_racer(const BGC_Game *g, Racer *r, int pane_w, int pane_h, int x_offset) {
     int target_y = g->mouse.y;
     int diff_y;
-    int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 4 : 6;
-    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 6 : 4;
+    int gain = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 8 : 10;
+    int max_spd = (g->ctrl_speed_mode == CTRL_SPEED_FAST) ? 3 : 2;
     (void)pane_w;
     (void)x_offset;
 
@@ -1909,7 +1910,7 @@ static void update_smooth_mouse_follow_racer(const BGC_Game *g, Racer *r, int pa
     if (target_y > pane_h - 25) target_y = pane_h - 25;
 
     diff_y = target_y - r->y;
-    if (abs(diff_y) > 2) {
+    if (abs(diff_y) > 3) {
         r->vy = diff_y / gain;
         if (r->vy > max_spd) r->vy = max_spd;
         if (r->vy < -max_spd) r->vy = -max_spd;
@@ -1924,7 +1925,7 @@ static void update_smooth_racer_physics(Racer *r, int pane_w, int pane_h) {
     r->vx = 0;
     vy_step = advance_scaled_units(&r->sub_step, r->vy);
     r->y += vy_step;
-    r->vy = (r->vy * 2) / 3;
+    r->vy = r->vy / 2;
 
     if (r->y < 24) { r->y = 24; r->vy = 0; }
     if (r->y > pane_h - 25) { r->y = pane_h - 25; r->vy = 0; }
@@ -3148,7 +3149,7 @@ int main(int argc, char **argv) {
 #if BGC_DJGPP_TARGET
         bgc_dos_flush_vga();
 #endif
-        delay(11);
+        delay(12);
     }
 
     write_obfuscated_options(&game);
@@ -3369,7 +3370,7 @@ LRESULT CALLBACK BGC_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (wParam == 'P' || wParam == VK_ESCAPE) g_win.screen = g_win.prev_screen;
             } else if (g_win.screen == SCREEN_SETTINGS) {
                 if (wParam == VK_UP)   g_win.settings_idx = (g_win.settings_idx + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
-                if (wParam == VK_DOWN) g_win.settings_idx = (g_win.settings_idx + 1) % SETTINGS_COUNT;
+                if (wParam == VK_DOWN) g_win.settings_idx = (g->settings_idx + 1) % SETTINGS_COUNT;
                 if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_RETURN || wParam == VK_SPACE) {
                     toggle_setting_item(&g_win);
                 }
